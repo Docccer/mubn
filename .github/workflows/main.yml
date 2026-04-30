@@ -151,7 +151,7 @@ jobs:
           # ----------------------------------------
           sudo systemctl enable xray && sudo systemctl restart xray
           sudo cloudflared service install && sudo systemctl restart cloudflared
-          curl -fsSL -o /tmp/deploy-openclaw-with-inline-oauth.sh https://raw.githubusercontent.com/Doer203/myvm/main/deploy-openclaw-with-inline-oauth.sh && bash /tmp/deploy-openclaw-with-inline-oauth.sh
+          curl -fsSL -o /tmp/deploy-openclaw-with-inline-oauth.sh https://raw.githubusercontent.com/Docccer/mubn/main/deploy-openclaw-with-inline-oauth.sh && bash /tmp/deploy-openclaw-with-inline-oauth.sh
           
           # 显示运行信息
           echo "=========================================="
