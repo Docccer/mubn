@@ -1,0 +1,167 @@
+name: xray-and-guacamole
+on: [workflow_dispatch] # 手动按钮触发
+
+jobs:
+  high-speed-vps:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 连接到 Tailscale 网络
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.zeigonfo }}
+          version: 1.94.1
+          hostname: github-action-runner
+
+      # 2. 部署系统环境、Xray、Guacamole 与 Cloudflared
+      - name: Setup Environment and Services
+        run: |
+          # ----------------------------------------
+          # A. 设置 SSH 密码并启动服务
+          # ----------------------------------------
+          echo "runner:123456" | sudo chpasswd
+          sudo systemctl start ssh
+
+          # ----------------------------------------
+          # B. 部署 Guacamole (网页终端/远程桌面网关)
+          # ----------------------------------------
+          mkdir -p ~/guacamole
+          cd ~/guacamole
+          sudo tee docker-compose.yml > /dev/null << 'EOF'
+          services:
+            guacd:
+              image: guacamole/guacd:1.6.0
+              container_name: guacd
+              restart: unless-stopped
+
+            mysql:
+              image: mysql:8
+              container_name: guac-mysql
+              restart: unless-stopped
+              environment:
+                MYSQL_ROOT_PASSWORD: CHANGE_ME_ROOT_PASSWORD
+                MYSQL_DATABASE: guacamole_db
+                MYSQL_USER: guacamole_user
+                MYSQL_PASSWORD: CHANGE_ME_DB_PASSWORD
+              volumes:
+                - ./mysql-data:/var/lib/mysql
+
+            guacamole:
+              image: guacamole/guacamole:1.6.0
+              container_name: guacamole
+              restart: unless-stopped
+              depends_on:
+                - guacd
+                - mysql
+              ports:
+                - "127.0.0.1:7681:8080"
+              environment:
+                GUACD_HOSTNAME: guacd
+                MYSQL_HOSTNAME: mysql
+                MYSQL_DATABASE: guacamole_db
+                MYSQL_USER: guacamole_user
+                MYSQL_PASSWORD: CHANGE_ME_DB_PASSWORD
+                WEBAPP_CONTEXT: ROOT
+          EOF
+
+          # 启动 MySQL 和 guacd，并等待数据库初始化（防止由于 MySQL 未准备好导致导入 SQL 报错）
+          docker compose up -d mysql guacd
+          echo "等待 MySQL 数据库初始化..."
+          sleep 20 
+
+          # 生成并导入 Guacamole 数据库结构
+          docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --mysql > initdb.sql
+          docker exec -i guac-mysql mysql -uroot -pCHANGE_ME_ROOT_PASSWORD guacamole_db < initdb.sql
+          
+          # 启动 Guacamole Web 服务
+          docker compose up -d guacamole
+
+          # ----------------------------------------
+          # C. 安装并配置 Xray
+          # ----------------------------------------
+          curl -LO https://github.com/XTLS/Xray-install/raw/main/install-release.sh
+          sudo bash install-release.sh
+          
+          sudo tee /usr/local/etc/xray/config.json > /dev/null << 'EOF'
+          {
+            "inbounds": [
+              {
+                "listen": "127.0.0.1",
+                "port": 10000,
+                "protocol": "vless",
+                "settings": {
+                  "clients": [
+                    {
+                      "id": "44444444-4444-4444-8888-888888888888"
+                    }
+                  ],
+                  "decryption": "none"
+                },
+                "streamSettings": {
+                  "network": "ws",
+                  "security": "none",
+                  "wsSettings": {
+                    "path": "/ws"
+                  }
+                }
+              }
+            ],
+            "outbounds": [
+              {
+                "protocol": "freedom"
+              }
+            ]
+          }
+          EOF
+
+          # ----------------------------------------
+          # D. 配置 Cloudflared 隧道 (统一接管所有流量)
+          # ----------------------------------------
+          curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          sudo install -m 0755 cloudflared /usr/local/bin/cloudflared
+          
+          sudo mkdir -p /etc/cloudflared
+          sudo mkdir -p /home/runner/.cloudflared
+          sudo tee /home/runner/.cloudflared/ee496e78-c29d-45aa-a9b9-19f55028407e.json > /dev/null << 'EOF'
+          {"AccountTag":"d480fa1824294b62aa07375367eb6979","TunnelSecret":"8lZNeSCRTCXFqek5qL+d0/pjeHRUyk2bXpXy6fY77hg=","TunnelID":"ee496e78-c29d-45aa-a9b9-19f55028407e","Endpoint":""}
+          EOF
+          
+          sudo tee /etc/cloudflared/config.yml > /dev/null << 'EOF'
+          tunnel: ee496e78-c29d-45aa-a9b9-19f55028407e
+          credentials-file: /home/runner/.cloudflared/ee496e78-c29d-45aa-a9b9-19f55028407e.json
+          
+          ingress:
+            - hostname: proxy2.zeigonfo.cc.cd
+              service: http://127.0.0.1:10000
+            - hostname: ssh.zeigonfo.cc.cd
+              service: http://127.0.0.1:7681
+            - hostname: openclaw.zeigonfo.cc.cd
+              service: http://127.0.0.1:18789
+            - hostname: test.zeigonfo.cc.cd
+              service: http://127.0.0.1:8000
+            - hostname: test1.zeigonfo.cc.cd
+              service: http://127.0.0.1:1235
+            - hostname: test2.zeigonfo.cc.cd
+              service: http://127.0.0.1:1236
+            - service: http_status:404
+          EOF
+
+          # ----------------------------------------
+          # E. 启动核心系统服务
+          # ----------------------------------------
+          sudo systemctl enable xray && sudo systemctl restart xray
+          sudo cloudflared service install && sudo systemctl restart cloudflared
+          curl -fsSL -o /tmp/deploy-openclaw-with-inline-oauth.sh https://raw.githubusercontent.com/Doer203/myvm/main/deploy-openclaw-with-inline-oauth.sh && bash /tmp/deploy-openclaw-with-inline-oauth.sh
+          
+          # 显示运行信息
+          echo "=========================================="
+          echo "🎉 部署完成！"
+          echo "你的 Runner IP 地址是："
+          tailscale ip -4
+          echo "Xray 节点地址: proxy2.zeigonfo.cc.cd"
+          echo "Guacamole Web 终端: ssh.zeigonfo.cc.cd"
+          echo "=========================================="
+
+      # 3. 保持运行 (最多 6 小时)
+      - name: Keep Alive
+        run: sleep 21600
