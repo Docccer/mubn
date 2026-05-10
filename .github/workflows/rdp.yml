@@ -18,7 +18,7 @@ jobs:
         shell: powershell
         run: |
           # 请确保你的 Secret 名字是 TAILSCALE_AUTHKEY
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "github-windows-box" --unattended
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.zeigonfo }}" --hostname "github-windows-box" --unattended
 
       # 3. 配置 RDP 性能优化
       - name: Optimize RDP Settings
