@@ -1,0 +1,72 @@
+name: Windows RDP Ultimate Performance
+on: [workflow_dispatch]
+
+jobs:
+  windows-remote:
+    runs-on: windows-latest
+    steps:
+      # 1. 下载并安装 Tailscale
+      - name: Install Tailscale (Manual)
+        shell: powershell
+        run: |
+          Write-Host "正在下载 Tailscale..."
+          Invoke-WebRequest -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile tailscale-setup.exe
+          Start-Process -FilePath "tailscale-setup.exe" -ArgumentList "/quiet", "/norestart" -Wait
+
+      # 2. 登录 Tailscale
+      - name: Connect to Tailscale
+        shell: powershell
+        run: |
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "github-windows-box" --unattended
+
+      # 3. 🔥 配置 RDP 极致画质与流畅度 🔥
+      - name: Optimize RDP Settings
+        shell: powershell
+        run: |
+          # (A) 设置用户 runneradmin 的密码
+          net user runneradmin "Aa@111111" 
+
+          # (B) 开启 RDP 连接
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
+
+          # --- 核心优化开始 ---
+
+          # 1️⃣ 解锁 60FPS (DWM 帧率限制)
+          # 路径: HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations" -Name "DWMFRAMEINTERVAL" -Value 15 -PropertyType DWORD -Force
+
+          # 定义组策略注册表路径
+          $TSPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+          # 如果路径不存在则创建
+          if (!(Test-Path $TSPath)) { New-Item -Path $TSPath -Force }
+
+          # 2️⃣ 启用 H.264/AVC 硬件编码
+          # 对应策略: "Use hardware graphics adapters for all Remote Desktop Services sessions"
+          New-ItemProperty -Path $TSPath -Name "VGPUEncoding" -Value 1 -PropertyType DWORD -Force
+
+          # 3️⃣ 优先使用 AVC444 (高质量色彩，文字更清晰)
+          # 对应策略: "Prioritize H.264/AVC 444 Graphics mode for Remote Desktop Connections"
+          New-ItemProperty -Path $TSPath -Name "AVC444ModePreferred" -Value 1 -PropertyType DWORD -Force
+
+          # --- 核心优化结束 ---
+
+          # (C) 开启防火墙端口 3389
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          # (D) 重启远程桌面服务以应用更改 (关键步骤！)
+          # 注意：在 Actions 里重启 TermService 可能会断开连接，但通常 Setup 阶段还没连入，所以是安全的。
+          # 如果报错，可以忽略，因为新设置通常在服务下一次会话建立时生效。
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
+
+          # (E) 显示连接信息
+          Write-Host "=========================================="
+          Write-Host "🎉 Windows 极致画质版 (AVC444 + 60FPS) 准备就绪！"
+          Write-Host "你的 Tailscale IP 地址是："
+          & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+          Write-Host "用户名: runneradmin"
+          Write-Host "密码:   Aa@111111"
+          Write-Host "=========================================="
+
+      # 4. 保持运行 (6 小时)
+      - name: Keep Alive
+        run: Start-Sleep -Seconds 21600
