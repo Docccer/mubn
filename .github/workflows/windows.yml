@@ -1,50 +1,51 @@
-name: Windows
+name: Windows Pure SSH via Tailscale
 on: [workflow_dispatch]
 
 jobs:
   windows-ssh:
     runs-on: windows-latest
     steps:
-      # 1. 下载并静默安装 Tailscale
+      # 1. Download and install Tailscale
       - name: Install Tailscale
         shell: powershell
         run: |
           Invoke-WebRequest -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile tailscale-setup.exe
           Start-Process -FilePath "tailscale-setup.exe" -ArgumentList "/quiet", "/norestart" -Wait
 
-      # 2. 登录 Tailscale (换成你自己的 Secret 名字)
+      # 2. Connect to Tailscale (注意替换 secrets 名字)
       - name: Connect to Tailscale
         shell: powershell
         run: |
           & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.zeigonfo }}" --hostname "github-win-ssh" --unattended
 
-      # 3. 开启 OpenSSH 服务并设置为 PowerShell 终端
+      # 3. Setup OpenSSH Server
       - name: Setup OpenSSH Server
         shell: powershell
         run: |
-          # (A) 设置用户密码
+          # (A) Set user password
           net user runneradmin "Aa@111111" 
 
-          # (B) 安装 Windows 原生 OpenSSH 服务端
-          Write-Host "正在安装 OpenSSH 服务端..."
+          # (B) Install Windows OpenSSH Server
+          Write-Host "Installing OpenSSH Server..."
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
 
-          # (C) 启动 sshd 服务，并设置为开机自启
+          # (C) Start sshd service
           Start-Service sshd
           Set-Service -Name sshd -StartupType 'Automatic'
 
-          # (D) 🔥关键：把 SSH 连进去之后的默认黑框框从老旧的 cmd 改为强大的 PowerShell
+          # (D) Change Default Shell to PowerShell
           New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
 
-          # (E) 显示连接信息
+          # (E) Display Connection Info
           Write-Host "=========================================="
-          Write-Host "🎉 Windows SSH 服务准备就绪！"
-          Write-Host "你的 Tailscale IP 地址是："
+          Write-Host "SUCCESS! Windows SSH Server is Ready."
+          Write-Host "Your Tailscale IP Address is:"
           & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          Write-Host "连接命令: ssh runneradmin@你的IP"
-          Write-Host "密码:     Aa@111111"
+          Write-Host ""
+          Write-Host "Command: ssh runneradmin@<Your_IP>"
+          Write-Host "Password: Aa@111111"
           Write-Host "=========================================="
 
-      # 4. 保持运行 (6 小时)
+      # 4. Keep Alive (6 hours)
       - name: Keep Alive
         run: Start-Sleep -Seconds 21600
