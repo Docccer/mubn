@@ -17,7 +17,7 @@ jobs:
       - name: Connect to Tailscale
         shell: powershell
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.TAILSCALE_AUTHKEY }}" --hostname "github-windows-box" --unattended
+          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.zeigonfo }}" --hostname "github-windows-box" --unattended
 
       # 3. 🔥 配置 RDP 极致画质与流畅度 🔥
       - name: Optimize RDP Settings
