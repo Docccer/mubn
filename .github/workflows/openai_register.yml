@@ -1,4 +1,4 @@
-name: OpenAI Register
+name: OpenAI Register v2
 on:
   workflow_dispatch:
 
@@ -27,57 +27,55 @@ jobs:
           const { chromium } = require('playwright');
           
           (async () => {
-            const browser = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-blink-features=AutomationControlled'] });
-            const ctx = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36' });
-            const page = await ctx.newPage();
-            
-            page.on('console', msg => console.log('[PAGE]', msg.text()));
-            page.on('request', req => {
-              if(req.url().includes('openai') || req.url().includes('auth0') || req.url().includes('cloudflare'))
-                console.log('[REQ]', req.method(), req.url().substring(0, 120));
+            const browser = await chromium.launch({ 
+              headless: true, 
+              args: [
+                '--no-sandbox',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process'
+              ] 
+            });
+            const ctx = await browser.newContext({ 
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+              viewport: { width: 1920, height: 1080 }
             });
             
-            console.log('=== Step 1: Navigate to ChatGPT ===');
+            // Anti-detection
+            await ctx.addInitScript(() => {
+              Object.defineProperty(navigator, 'webdriver', { get: () => false });
+              Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+              Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+              window.chrome = { runtime: {} };
+            });
+            
+            const page = await ctx.newPage();
+            
+            page.on('console', msg => {
+              const text = msg.text();
+              if(text.includes('===') || text.includes('URL:') || text.includes('Title:') || text.includes('Found') || text.includes('Click') || text.includes('After') || text.includes('Password') || text.includes('FATAL') || text.includes('DONE') || text.includes('Error:') || text.includes('Page text'))
+                console.log('[PAGE]', text);
+            });
+            
+            // Try auth.openai.com directly
+            console.log('=== Step 1: Navigate to auth.openai.com signup ===');
             try {
-              await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await page.goto('https://auth.openai.com/u/signup/identifier', { waitUntil: 'networkidle', timeout: 30000 });
             } catch(e) {
               console.log('Nav error:', e.message.substring(0, 100));
             }
-            await page.waitForTimeout(5000);
+            await page.waitForTimeout(3000);
             await page.screenshot({ path: 'C:/openai_step1.png', fullPage: false });
             console.log('URL:', page.url());
             console.log('Title:', await page.title());
             
-            // Check for Turnstile
-            const turnstile = await page.$('iframe[src*="turnstile"], iframe[src*="challenges"]');
-            if(turnstile) {
-              console.log('=== TURNSTILE DETECTED ===');
-              await page.waitForTimeout(10000);
-              await page.screenshot({ path: 'C:/openai_turnstile.png', fullPage: false });
-            }
-            
-            // Look for Sign up
-            console.log('=== Looking for Sign up ===');
-            const allButtons = await page.$$eval('button, a[href*="signup"], a[href*="login"], a[href*="auth"]', els => 
-              els.map(e => ({ tag: e.tagName, text: (e.textContent||'').trim().substring(0,50), href: e.href||'', classes: e.className.substring(0,80) }))
-            );
-            console.log('Buttons:', JSON.stringify(allButtons.filter(b => b.text.length > 0).slice(0, 15)));
-            
-            // Try clicking Sign up
-            const signupBtn = await page.$('button:has-text("Sign up"), a:has-text("Sign up"), a:has-text("Get started"), a[href*="signup"]');
-            if(signupBtn) {
-              console.log('Found Sign up, clicking...');
-              await signupBtn.click();
-              await page.waitForTimeout(5000);
-              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
-              console.log('After signup URL:', page.url());
-            } else {
-              console.log('No Sign up button, trying direct auth');
-              try {
-                await page.goto('https://auth.openai.com/u/signup/identifier', { waitUntil: 'domcontentloaded', timeout: 20000 });
-              } catch(e) {}
-              await page.waitForTimeout(3000);
-              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
+            // Check for Cloudflare
+            const cfChallenge = await page.$('#challenge-running, #challenge-form, [id*="challenge"]');
+            if(cfChallenge) {
+              console.log('=== CLOUDFLARE CHALLENGE DETECTED ===');
+              // Wait for it to resolve
+              await page.waitForTimeout(15000);
+              await page.screenshot({ path: 'C:/openai_cf.png', fullPage: false });
+              console.log('After CF wait URL:', page.url());
             }
             
             // Look for email input
@@ -87,17 +85,28 @@ jobs:
               console.log('Found email input!');
               await emailInput.fill('hxtest5adafcfa@hotmail.com');
               await page.waitForTimeout(1000);
-              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue")');
+              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
+              
+              // Look for Continue
+              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Sign up")');
               if(continueBtn) {
                 console.log('Clicking Continue...');
                 await continueBtn.click();
                 await page.waitForTimeout(8000);
                 await page.screenshot({ path: 'C:/openai_step3.png', fullPage: false });
                 console.log('After continue URL:', page.url());
+                console.log('After continue Title:', await page.title());
               }
             } else {
-              console.log('No email input found');
-              const bodyText = await page.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2).map(t => t.trim().substring(0, 80)).slice(0, 30));
+              console.log('No email input found on auth.openai.com');
+              // Print all inputs
+              const inputs = await page.$$eval('input', els => els.map(e => ({ name: e.name, type: e.type, id: e.id, placeholder: e.placeholder })));
+              console.log('Inputs:', JSON.stringify(inputs));
+              // Print all buttons
+              const buttons = await page.$$eval('button', els => els.map(e => ({ text: e.textContent.trim().substring(0, 50), type: e.type })));
+              console.log('Buttons:', JSON.stringify(buttons));
+              // Print page text
+              const bodyText = await page.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2).map(t => t.trim().substring(0, 80)).slice(0, 20));
               console.log('Page text:', JSON.stringify(bodyText));
             }
             
@@ -116,13 +125,6 @@ jobs:
               }
             }
             
-            // Birthday page
-            const monthCombo = await page.$('[role="combobox"]');
-            if(monthCombo) {
-              console.log('=== Birthday page detected ===');
-              await page.screenshot({ path: 'C:/openai_birthday.png', fullPage: false });
-            }
-            
             // Verification code page
             const codeInput = await page.$('input[name="code"], input[name="otp"], input[autocomplete="one-time-code"]');
             if(codeInput) {
@@ -130,16 +132,23 @@ jobs:
               await page.screenshot({ path: 'C:/openai_verify.png', fullPage: false });
             }
             
-            // Check for logged in state
+            // Birthday page
+            const monthCombo = await page.$('[role="combobox"]');
+            if(monthCombo) {
+              console.log('=== Birthday page detected ===');
+              await page.screenshot({ path: 'C:/openai_birthday.png', fullPage: false });
+            }
+            
+            // Final state
             console.log('=== Final State ===');
             console.log('URL:', page.url());
             console.log('Title:', await page.title());
             await page.screenshot({ path: 'C:/openai_final.png', fullPage: false });
             
-            // If we got to ChatGPT, try to get API key
+            // If we got redirected to ChatGPT, try API keys
             const url = page.url();
             if(url.includes('chat.openai.com') && !url.includes('auth')) {
-              console.log('=== Possibly logged in! Navigating to API keys ===');
+              console.log('=== Possibly logged in! ===');
               try {
                 await page.goto('https://platform.openai.com/api-keys', { waitUntil: 'domcontentloaded', timeout: 20000 });
               } catch(e) {}
