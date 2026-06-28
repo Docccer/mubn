@@ -1,194 +1,23 @@
-name: outlook-desktop2
+name: Outlook Xray
 on:
   workflow_dispatch:
-
 jobs:
   register:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - name: Install
-        run: |
-          pip install playwright
-          playwright install chromium
-          playwright install-deps chromium
-
-      - name: Create script
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install playwright && python -m playwright install --with-deps chromium
+      - name: Run
         shell: bash
         run: |
-          cat > /tmp/reg.py << 'ENDSCRIPT'
-import sys
-import time
-import random
-import string
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-from playwright.sync_api import sync_playwright
-
-suffix = "".join(random.choices(string.hexdigits[:16], k=8))
-username = "hxtest" + suffix
-password = "HxTest2026!@#"
-print("[*] Username: " + username, flush=True)
-print("[*] Password: " + password, flush=True)
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-    page = browser.new_page(viewport={"width": 1280, "height": 900})
-    page.goto("https://account.proton.me/signup?plan=free", timeout=60000)
-    page.wait_for_load_state("networkidle", timeout=60000)
-    time.sleep(5)
-
-    # Close popups
-    for sel in ['button:has-text("Close")', 'button:has-text("No thanks")', 'button:has-text("Skip")']:
-        try:
-            btn = page.locator(sel)
-            if btn.is_visible(timeout=2000):
-                btn.click()
-                time.sleep(1)
-        except:
-            pass
-
-    page.screenshot(path="step1.png")
-    print("[*] step1 saved", flush=True)
-
-    # Get input info
-    info = page.evaluate("""() => {
-        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
-        const results = [];
-        for (let i = 0; i < inputs.length; i++) {
-            const el = inputs[i];
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            results.push({
-                index: i, id: el.id, type: el.type,
-                visibility: style.visibility,
-                x: Math.round(rect.x), y: Math.round(rect.y),
-                w: Math.round(rect.width), h: Math.round(rect.height)
-            });
-        }
-        return results;
-    }""")
-    print("[*] Inputs: " + str(info), flush=True)
-
-    # React native setter approach
-    fill_js = """
-    (args) => {
-        const nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLInputElement.prototype, 'value'
-        ).set;
-        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
-        
-        let uname = null, pwd = null, confirm = null;
-        for (const inp of inputs) {
-            if (inp.id === 'username' || (!uname && inp.type !== 'password')) uname = inp;
-            if (inp.id === 'password' || inp.type === 'password') pwd = inp;
-        }
-        if (!uname && inputs.length > 0) uname = inputs[0];
-        if (!pwd && inputs.length > 1) pwd = inputs[1];
-        
-        let ur = 'skip', pr = 'skip', cr = 'skip';
-        
-        if (uname) {
-            uname.focus();
-            nativeSetter.call(uname, args.u);
-            uname.dispatchEvent(new Event('input', {bubbles: true}));
-            uname.dispatchEvent(new Event('change', {bubbles: true}));
-            ur = uname.value;
-        }
-        if (pwd) {
-            pwd.focus();
-            nativeSetter.call(pwd, args.p);
-            pwd.dispatchEvent(new Event('input', {bubbles: true}));
-            pwd.dispatchEvent(new Event('change', {bubbles: true}));
-            pr = pwd.value;
-        }
-        const cel = document.getElementById('password-confirm');
-        if (cel) {
-            cel.focus();
-            nativeSetter.call(cel, args.p);
-            cel.dispatchEvent(new Event('input', {bubbles: true}));
-            cel.dispatchEvent(new Event('change', {bubbles: true}));
-            cr = cel.value;
-        }
-        return {u: ur, p: pr, c: cr};
-    }
-    """
-    result = page.evaluate(fill_js, {"u": username, "p": password})
-    print("[*] Fill result: " + str(result), flush=True)
-    page.screenshot(path="step2.png")
-
-    time.sleep(2)
-    vals = page.evaluate("""() => {
-        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
-        return Array.from(inputs).map(e => ({id: e.id, val: e.value.substring(0, 20)}));
-    }""")
-    print("[*] Values check: " + str(vals), flush=True)
-
-    # Also try locator.fill as backup
-    if not result.get("u") or result["u"] == "skip" or result["u"] == "":
-        print("[*] React setter failed for username, trying locator.fill...", flush=True)
-        try:
-            loc = page.locator('[data-testid="input-input-element"]').first
-            loc.click(force=True, timeout=5000)
-            loc.fill(username, timeout=5000)
-            print("[*] locator.fill username done", flush=True)
-        except Exception as e:
-            print("[!] locator.fill failed: " + str(e), flush=True)
-            # Last resort: keyboard type
-            try:
-                loc = page.locator('#username')
-                loc.click(force=True, timeout=5000)
-                page.keyboard.type(username, delay=50)
-                print("[*] keyboard.type username done", flush=True)
-            except Exception as e2:
-                print("[!] keyboard.type failed: " + str(e2), flush=True)
-
-    if not result.get("p") or result["p"] == "skip" or result["p"] == "":
-        print("[*] React setter failed for password, trying locator.fill...", flush=True)
-        try:
-            loc = page.locator('#password')
-            loc.click(force=True, timeout=5000)
-            loc.fill(password, timeout=5000)
-            print("[*] locator.fill password done", flush=True)
-        except Exception as e:
-            print("[!] locator.fill password failed: " + str(e), flush=True)
-
-    page.screenshot(path="step2b.png")
-
-    # Click submit
-    submit = page.locator('button:has-text("Start using Proton Mail now")')
-    if submit.is_visible(timeout=5000):
-        print("[*] Clicking submit...", flush=True)
-        submit.click()
-        time.sleep(5)
-        page.screenshot(path="step3.png")
-        url = page.url
-        title = page.title()
-        print("[*] After submit URL: " + url, flush=True)
-        print("[*] Title: " + title, flush=True)
-        if "signup" not in url:
-            print("[!] SUCCESS - past signup page!", flush=True)
-        else:
-            print("[!] Still on signup page", flush=True)
-            # Check errors
-            errs = page.evaluate("""() => {
-                const els = document.querySelectorAll('[class*="error"], [role="alert"], [class*="notification"]');
-                return Array.from(els).map(e => e.textContent.trim()).filter(t => t.length > 0 && t.length < 200);
-            }""")
-            print("[!] Page text sample: " + page.evaluate("() => document.body.innerText.substring(0, 500)"), flush=True)
-            if errs:
-                print("[!] Errors: " + str(errs), flush=True)
-    else:
-        print("[!] Submit button not found", flush=True)
-
-    page.screenshot(path="final.png")
-    browser.close()
-
-print("", flush=True)
-print("=== CREDENTIALS ===", flush=True)
-print("Email: " + username + "@proton.me", flush=True)
-print("Password: " + password, flush=True)
-print("=== END ===", flush=True)
-ENDSCRIPT
-
-      - name: Run script
-        shell: cmd
-        run: python /tmp/reg.py
+          echo 'aW1wb3J0IHN5cywgdGltZSwgcmFuZG9tLCBzdHJpbmcsIGpzb24sIHN1YnByb2Nlc3MsIG9zLCB1cmxsaWIucmVxdWVzdCwgemlwZmlsZSwgc3NsCnN5cy5zdGRvdXQucmVjb25maWd1cmUoZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJyZXBsYWNlIikKClhSQVlfRElSID0gb3MucGF0aC5leHBhbmR1c2VyKCJ+L3hyYXkiKQpYUkFZX0VYRSA9IG9zLnBhdGguam9pbihYUkFZX0RJUiwgInhyYXkuZXhlIikKCiMgRG93bmxvYWQgeHJheSBpZiBuZWVkZWQKaWYgbm90IG9zLnBhdGguZXhpc3RzKFhSQVlfRVhFKToKICAgIHByaW50KCJbKl0gRG93bmxvYWRpbmcgeHJheS4uLiIsIGZsdXNoPVRydWUpCiAgICBvcy5tYWtlZGlycyhYUkFZX0RJUiwgZXhpc3Rfb2s9VHJ1ZSkKICAgIGN0eCA9IHNzbC5jcmVhdGVfZGVmYXVsdF9jb250ZXh0KCkKICAgIGN0eC5jaGVja19ob3N0bmFtZSA9IEZhbHNlCiAgICBjdHgudmVyaWZ5X21vZGUgPSBzc2wuQ0VSVF9OT05FCiAgICB1cmwgPSAiaHR0cHM6Ly9naXRodWIuY29tL1hUTFMvWHJheS1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL3YyNS42LjgvWHJheS13aW5kb3dzLTY0LnppcCIKICAgIHJlcSA9IHVybGxpYi5yZXF1ZXN0LlJlcXVlc3QodXJsLCBoZWFkZXJzPXsiVXNlci1BZ2VudCI6ICJNb3ppbGxhLzUuMCJ9KQogICAgcmVzcCA9IHVybGxpYi5yZXF1ZXN0LnVybG9wZW4ocmVxLCB0aW1lb3V0PTYwLCBjb250ZXh0PWN0eCkKICAgIHpwYXRoID0gb3MucGF0aC5qb2luKFhSQVlfRElSLCAieHJheS56aXAiKQogICAgd2l0aCBvcGVuKHpwYXRoLCAnd2InKSBhcyBmOgogICAgICAgIGYud3JpdGUocmVzcC5yZWFkKCkpCiAgICB3aXRoIHppcGZpbGUuWmlwRmlsZSh6cGF0aCwgJ3InKSBhcyB6OgogICAgICAgIHouZXh0cmFjdGFsbChYUkFZX0RJUikKICAgIG9zLnJlbW92ZSh6cGF0aCkKICAgIHByaW50KCJbKl0gWHJheSBpbnN0YWxsZWQiLCBmbHVzaD1UcnVlKQoKIyBQcm94aWVzIHRvIHRyeSAoVVMvU2cgZmlyc3QgZm9yIE1pY3Jvc29mdCkKcHJveGllcyA9IFsKICAgIHsibiI6ICJVUy0xODUzMiIsICJhIjogIjY0LjE4Ni4yNTIuMTY2IiwgInAiOiA0NDMsICJpZCI6ICJlZWI2ODIzYy1iOTI2LTRlYTItODY2YS01NTQyZWRkMjZlNTkiLCAic25pIjogInQxczEucml0dGJvLmtkbnMuZnIiLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJVUy0xODUyMCIsICJhIjogIjY0LjE4Ni4yNDEuMTU0IiwgInAiOiA0NDMsICJpZCI6ICJlZWI2ODIzYy1iOTI2LTRlYTItODY2YS01NTQyZWRkMjZlNTkiLCAic25pIjogInQxczEucml0dGJvLmtkbnMuZnIiLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJTRy1WdWx0ciIsICJhIjogIjE0OS4yOC4xMzYuMTc3IiwgInAiOiA0NDMsICJpZCI6ICJjN2Q1MDYyYi02MDRlLTQyYjAtODVkMC0wYmEzNTRjZWUzMTEiLCAic25pIjogInd3dy5hcHBsZS5jb20iLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJTRy01MiIsICJhIjogIjUyLjIzNy44OS4xNzEiLCAicCI6IDQ0MywgImlkIjogIjYxZjdhMGFjLTc1MDAtNDJmMS1iMjdiLWU4NWNiMTZkNmFmYSIsICJzbmkiOiAid3d3LmNsb3VkZmxhcmUuY29tIiwgInQiOiAidmxlc3MiLCAiZmxvdyI6ICJ4dGxzLXJwcngtdmlzaW9uIn0sCiAgICB7Im4iOiAiVVMtTnZpZGlhIiwgImEiOiAiMTg1LjEzNy4xNTcuNzIiLCAicCI6IDQ0MywgImlkIjogIjU1YTUwNDRkLTViMzUtNDA1Zi05NzFjLWVhN2FhY2FhZmNiNCIsICJzbmkiOiAid3d3Lm52aWRpYS5jb20iLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJVUy1TeW5vcmEiLCAiYSI6ICJ3d3cuc3lub3JhLXBsYXRmb3JtLmNvbSIsICJwIjogNDQzLCAiaWQiOiAiNWQ1NjEwNzgtNjhmOC00ZmY1LWJhYmQtZGM0MWQxNTM1YzJiIiwgInNuaSI6ICJhaS11cy5ub3ZhcmEtYXVyYS5jb20iLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJVUy1XZXF1IiwgImEiOiAidXMud2VxdS5pY2tseS5jby51ayIsICJwIjogNDQzLCAiaWQiOiAiNjAzMDBhZmEtMzM2Ni00YWUzLTk1OWEtN2I1MDQzOGFjZWJiIiwgInNuaSI6ICJ1cy53ZXF1Lmlja2x5LmNvLnVrIiwgInQiOiAidmxlc3MiLCAiZmxvdyI6ICJ4dGxzLXJwcngtdmlzaW9uIn0sCiAgICB7Im4iOiAiTkwtRmFzdGx5IiwgImEiOiAiMTk5LjIzMi43OC4xNDMiLCAicCI6IDQ0MywgImlkIjogIjNkOGJjNzNhLTM2ZDItNGIxYy04M2ZmLWQxZTdiY2RmM2I5OCIsICJzbmkiOiAiZ2xvYmFsLmZhc3RseS5jb20iLCAidCI6ICJ2bGVzcyJ9LAogICAgeyJuIjogIkhLIiwgImEiOiAiaGsud2VxdS5ob3N0IiwgInAiOiA0NDMsICJpZCI6ICI2MDMwMGFmYS0zMzY2LTRhZTMtOTU5YS03YjUwNDM4YWNlYmIiLCAic25pIjogImhrLndlcXUuaG9zdCIsICJ0IjogInZsZXNzIiwgImZsb3ciOiAieHRscy1ycHJ4LXZpc2lvbiJ9LAogICAgeyJuIjogIkpQNSIsICJhIjogImpwNS53ZXF1Lmhvc3QiLCAicCI6IDg0NDMsICJpZCI6ICI2MDMwMGFmYS0zMzY2LTRhZTMtOTU5YS03YjUwNDM4YWNlYmIiLCAic25pIjogImpwNS53ZXF1Lmhvc3QiLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJLUjIiLCAiYSI6ICJrcjIud2VxdS5ob3N0IiwgInAiOiA1NDQzLCAiaWQiOiAiNjAzMDBhZmEtMzM2Ni00YWUzLTk1OWEtN2I1MDQzOGFjZWJiIiwgInNuaSI6ICJrcjIud2VxdS5ob3N0IiwgInQiOiAidmxlc3MiLCAiZmxvdyI6ICJ4dGxzLXJwcngtdmlzaW9uIn0sCiAgICB7Im4iOiAiS1ItRmVuIiwgImEiOiAia3Iua2VmZW5odWltaW4uY29tIiwgInAiOiA5MDAxLCAiaWQiOiAiZGRhODJlNTctMDJjOC00ZDBiLTljNmMtYzI5NDVlNTUwOWU1IiwgInNuaSI6ICJ3d3cuYXBwbGUuY29tIiwgInQiOiAidmxlc3MiLCAiZmxvdyI6ICJ4dGxzLXJwcngtdmlzaW9uIn0sCiAgICB7Im4iOiAiREUtTnZpZGlhIiwgImEiOiAiMTg1LjEzNy4xNTcuNzIiLCAicCI6IDQ0MywgImlkIjogIjU1YTUwNDRkLTViMzUtNDA1Zi05NzFjLWVhN2FhY2FhZmNiNCIsICJzbmkiOiAid3d3Lm52aWRpYS5jb20iLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKICAgIHsibiI6ICJSVS1BVSIsICJhIjogInJ1LWRjLndlcXUuaG9zdCIsICJwIjogNDQzLCAiaWQiOiAiNjAzMDBhZmEtMzM2Ni00YWUzLTk1OWEtN2I1MDQzOGFjZWJiIiwgInNuaSI6ICJydS1kYy53ZXF1Lmhvc3QiLCAidCI6ICJ2bGVzcyIsICJmbG93IjogInh0bHMtcnByeC12aXNpb24ifSwKXQoKZnJvbSBwbGF5d3JpZ2h0LnN5bmNfYXBpIGltcG9ydCBzeW5jX3BsYXl3cmlnaHQKCmZvciBweCBpbiBwcm94aWVzOgogICAgbmFtZSA9IHB4WyJuIl0KICAgIGZsb3cgPSBweC5nZXQoImZsb3ciLCAiIikKICAgIAogICAgaWYgcHhbInQiXSA9PSAidmxlc3MiOgogICAgICAgIG91dGJvdW5kID0gewogICAgICAgICAgICAicHJvdG9jb2wiOiAidmxlc3MiLAogICAgICAgICAgICAic2V0dGluZ3MiOiB7InZuZXh0IjogW3siYWRkcmVzcyI6IHB4WyJhIl0sICJwb3J0IjogcHhbInAiXSwgInVzZXJzIjogW3siaWQiOiBweFsiaWQiXSwgImVuY3J5cHRpb24iOiAibm9uZSIsICJmbG93IjogZmxvd31dfV19LAogICAgICAgICAgICAic3RyZWFtU2V0dGluZ3MiOiB7Im5ldHdvcmsiOiAidGNwIiwgInNlY3VyaXR5IjogInJlYWxpdHkiLCAicmVhbGl0eVNldHRpbmdzIjogeyJzZXJ2ZXJOYW1lIjogcHhbInNuaSJdLCAiZmluZ2VycHJpbnQiOiAiY2hyb21lIn19CiAgICAgICAgfQogICAgZWxzZToKICAgICAgICBjb250aW51ZSAgIyBza2lwIHRyb2phbiBmb3Igbm93CiAgICAKICAgIGNvbmZpZyA9IHsKICAgICAgICAibG9nIjogeyJsb2dsZXZlbCI6ICJ3YXJuaW5nIn0sCiAgICAgICAgImluYm91bmRzIjogW3sicG9ydCI6IDEwODA4LCAicHJvdG9jb2wiOiAic29ja3MiLCAic2V0dGluZ3MiOiB7InVkcCI6IFRydWV9fV0sCiAgICAgICAgIm91dGJvdW5kcyI6IFtvdXRib3VuZF0KICAgIH0KICAgIAogICAgY2ZnX3BhdGggPSBvcy5wYXRoLmpvaW4oWFJBWV9ESVIsICJjZmcuanNvbiIpCiAgICB3aXRoIG9wZW4oY2ZnX3BhdGgsICd3JykgYXMgZjoKICAgICAgICBqc29uLmR1bXAoY29uZmlnLCBmKQogICAgCiAgICBwcmludChmIlxuWypdIHtuYW1lfToge3B4WydhJ119OntweFsncCddfSIsIGZsdXNoPVRydWUpCiAgICAKICAgIHRyeToKICAgICAgICBwcm9jID0gc3VicHJvY2Vzcy5Qb3BlbihbWFJBWV9FWEUsICItYyIsIGNmZ19wYXRoXSwgc3Rkb3V0PXN1YnByb2Nlc3MuUElQRSwgc3RkZXJyPXN1YnByb2Nlc3MuUElQRSwgY3dkPVhSQVlfRElSKQogICAgICAgIHRpbWUuc2xlZXAoMykKICAgICAgICAKICAgICAgICBpZiBwcm9jLnBvbGwoKSBpcyBub3QgTm9uZToKICAgICAgICAgICAgZXJyID0gcHJvYy5zdGRlcnIucmVhZCgpLmRlY29kZSgpWzoyMDBdIGlmIHByb2Muc3RkZXJyIGVsc2UgInVua25vd24iCiAgICAgICAgICAgIHByaW50KGYiICBbIV0gWHJheSBleGl0OiB7ZXJyfSIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgCiAgICAgICAgc3VmZml4ID0gIiIuam9pbihyYW5kb20uY2hvaWNlcyhzdHJpbmcuaGV4ZGlnaXRzWzoxNl0sIGs9OCkpCiAgICAgICAgZW1haWwgPSAiaHh0ZXN0IiArIHN1ZmZpeFs6OF0gKyAiQGhvdG1haWwuY29tIgogICAgICAgIHBhc3N3b3JkID0gIkh4VGVzdDIwMjYhQCMiCiAgICAgICAgCiAgICAgICAgd2l0aCBzeW5jX3BsYXl3cmlnaHQoKSBhcyBwOgogICAgICAgICAgICBicm93c2VyID0gcC5jaHJvbWl1bS5sYXVuY2goCiAgICAgICAgICAgICAgICBoZWFkbGVzcz1UcnVlLAogICAgICAgICAgICAgICAgY2hhbm5lbD0ibXNlZGdlIiwKICAgICAgICAgICAgICAgIGFyZ3M9WyItLW5vLXNhbmRib3giLCAiLS1kaXNhYmxlLWJsaW5rLWZlYXR1cmVzPUF1dG9tYXRpb25Db250cm9sbGVkIl0sCiAgICAgICAgICAgICAgICBwcm94eT17InNlcnZlciI6ICJzb2NrczU6Ly8xMjcuMC4wLjE6MTA4MDgifQogICAgICAgICAgICApCiAgICAgICAgICAgIGN0eF9icm93c2VyID0gYnJvd3Nlci5uZXdfY29udGV4dCgKICAgICAgICAgICAgICAgIHZpZXdwb3J0PXsid2lkdGgiOiAxMjgwLCAiaGVpZ2h0IjogOTAwfSwKICAgICAgICAgICAgICAgIHVzZXJfYWdlbnQ9Ik1vemlsbGEvNS4wIChXaW5kb3dzIE5UIDEwLjA7IFdpbjY0OyB4NjQpIEFwcGxlV2ViS2l0LzUzNy4zNiAoS0hUTUwsIGxpa2UgR2Vja28pIENocm9tZS8xMzcuMC4wLjAgU2FmYXJpLzUzNy4zNiBFZGcvMTM3LjAuMC4wIgogICAgICAgICAgICApCiAgICAgICAgICAgIHBhZ2UgPSBjdHhfYnJvd3Nlci5uZXdfcGFnZSgpCiAgICAgICAgICAgIHBhZ2UuYWRkX2luaXRfc2NyaXB0KCIiIgogICAgICAgICAgICAgICAgT2JqZWN0LmRlZmluZVByb3BlcnR5KG5hdmlnYXRvciwgJ3dlYmRyaXZlcicsIHtnZXQ6ICgpID0+IHVuZGVmaW5lZH0pOwogICAgICAgICAgICAgICAgZGVsZXRlIG5hdmlnYXRvci5fX3Byb3RvX18ud2ViZHJpdmVyOwogICAgICAgICAgICAgICAgd2luZG93LmNocm9tZSA9IHtydW50aW1lOiB7fSwgbG9hZFRpbWVzOiBmdW5jdGlvbigpe30sIGNzaTogZnVuY3Rpb24oKXt9fTsKICAgICAgICAgICAgIiIiKQogICAgICAgICAgICAKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgcGFnZS5nb3RvKCJodHRwczovL3NpZ251cC5saXZlLmNvbS9zaWdudXA/bGljPTEmbWt0PWVuLXVzJmxjaWQ9MTAzMyZhY2NvdW50U2lnblVwVHlwZT1ob3RtYWlsIiwgdGltZW91dD0yNTAwMCkKICAgICAgICAgICAgICAgIHRpbWUuc2xlZXAoOCkKICAgICAgICAgICAgICAgIGJvZHkgPSBwYWdlLmV2YWx1YXRlKCIoKSA9PiBkb2N1bWVudC5ib2R5LmlubmVyVGV4dC5zdWJzdHJpbmcoMCwgMjAwKSIpCiAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgIGlmICJibG9ja2VkIiBub3QgaW4gYm9keS5sb3dlcigpIGFuZCAiQ3JlYXRlIHlvdXIgTWljcm9zb2Z0IiBpbiBib2R5OgogICAgICAgICAgICAgICAgICAgIHByaW50KGYiICBbKioqXSBHT1QgU0lHTlVQIFBBR0UhIiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICBwYWdlLmxvY2F0b3IoJ2lucHV0W25hbWU9ImVtYWlsIl0nKS5maWxsKGVtYWlsKQogICAgICAgICAgICAgICAgICAgIHRpbWUuc2xlZXAoMC41KQogICAgICAgICAgICAgICAgICAgIHBhZ2UuZXZhbHVhdGUoIiIiKCkgPT4geyBmb3IgKGNvbnN0IGIgb2YgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnYnV0dG9uJykpIHsgaWYgKGIudGV4dENvbnRlbnQudHJpbSgpID09PSAnTmV4dCcgJiYgYi5nZXRCb3VuZGluZ0NsaWVudFJlY3QoKS53aWR0aCA+IDApIHsgYi5jbGljaygpOyBicmVhazsgfX19IiIiKQogICAgICAgICAgICAgICAgICAgIHRpbWUuc2xlZXAoOCkKICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICBwd2QgPSBwYWdlLmxvY2F0b3IoJ2lucHV0W3R5cGU9InBhc3N3b3JkIl0nKQogICAgICAgICAgICAgICAgICAgIGlmIHB3ZC5jb3VudCgpID4gMCBhbmQgcHdkLmZpcnN0LmlzX3Zpc2libGUodGltZW91dD01MDAwKToKICAgICAgICAgICAgICAgICAgICAgICAgcHdkLmZpcnN0LmZpbGwocGFzc3dvcmQpCiAgICAgICAgICAgICAgICAgICAgICAgIHRpbWUuc2xlZXAoMC41KQogICAgICAgICAgICAgICAgICAgICAgICBwYWdlLmV2YWx1YXRlKCIiIigpID0+IHsgZm9yIChjb25zdCBiIG9mIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ2J1dHRvbicpKSB7IGlmIChiLnRleHRDb250ZW50LnRyaW0oKSA9PT0gJ05leHQnICYmIGIuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCkud2lkdGggPiAwKSB7IGIuY2xpY2soKTsgYnJlYWs7IH19fSIiIikKICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCg4KQogICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgbW9udGhfZGQgPSBwYWdlLmxvY2F0b3IoJyNCaXJ0aE1vbnRoRHJvcGRvd24nKQogICAgICAgICAgICAgICAgICAgICAgICBpZiBtb250aF9kZC5jb3VudCgpID4gMCBhbmQgbW9udGhfZGQuZmlyc3QuaXNfdmlzaWJsZSh0aW1lb3V0PTMwMDApOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgcGFnZS5ldmFsdWF0ZSgiKCkgPT4gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ0JpcnRoTW9udGhEcm9wZG93bicpLmNsaWNrKCkiKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCgxKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgcGFnZS5ldmFsdWF0ZSgiIiIoKSA9PiB7IGNvbnN0IG9wdHMgPSBBcnJheS5mcm9tKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ1tyb2xlPSJvcHRpb24iXScpKS5maWx0ZXIoZSA9PiBlLmdldEJvdW5kaW5nQ2xpZW50UmVjdCgpLndpZHRoID4gMCk7IGlmIChvcHRzLmxlbmd0aCA+PSA1KSBvcHRzWzRdLmNsaWNrKCk7IH0iIiIpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0aW1lLnNsZWVwKDAuNSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHBhZ2UuZXZhbHVhdGUoIigpID0+IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCdCaXJ0aERheURyb3Bkb3duJykuY2xpY2soKSIpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0aW1lLnNsZWVwKDEpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYWdlLmV2YWx1YXRlKCIiIigpID0+IHsgY29uc3Qgb3B0cyA9IEFycmF5LmZyb20oZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnW3JvbGU9Im9wdGlvbiJdJykpLmZpbHRlcihlID0+IGUuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCkud2lkdGggPiAwKTsgaWYgKG9wdHMubGVuZ3RoID49IDE1KSBvcHRzWzE0XS5jbGljaygpOyB9IiIiKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCgwLjUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYWdlLmxvY2F0b3IoJyNmbG9hdGluZ0xhYmVsSW5wdXQyNCcpLmNsaWNrKGZvcmNlPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBmb3IgY2ggaW4gIjE5OTAiOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHBhZ2Uua2V5Ym9hcmQucHJlc3MoY2gpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCgwLjA1KQogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCgwLjUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYWdlLmV2YWx1YXRlKCIiIigpID0+IHsgZm9yIChjb25zdCBiIG9mIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ2J1dHRvbicpKSB7IGlmIChiLnRleHRDb250ZW50LnRyaW0oKSA9PT0gJ05leHQnICYmIGIuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCkud2lkdGggPiAwKSB7IGIuY2xpY2soKTsgYnJlYWs7IH19fSIiIikKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHRpbWUuc2xlZXAoOCkKICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgIGZpcnN0ID0gcGFnZS5sb2NhdG9yKCcjZmlyc3ROYW1lSW5wdXQnKQogICAgICAgICAgICAgICAgICAgICAgICBpZiBmaXJzdC5jb3VudCgpID4gMCBhbmQgZmlyc3QuZmlyc3QuaXNfdmlzaWJsZSh0aW1lb3V0PTUwMDApOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgZmlyc3QuZmlyc3QuZmlsbCgiVGVzdCIpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYWdlLmxvY2F0b3IoJyNsYXN0TmFtZUlucHV0JykuZmlyc3QuZmlsbCgiVXNlciIpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0aW1lLnNsZWVwKDAuNSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHBhZ2UuZXZhbHVhdGUoIiIiKCkgPT4geyBmb3IgKGNvbnN0IGIgb2YgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnYnV0dG9uJykpIHsgaWYgKGIudGV4dENvbnRlbnQudHJpbSgpID09PSAnTmV4dCcgJiYgYi5nZXRCb3VuZGluZ0NsaWVudFJlY3QoKS53aWR0aCA+IDApIHsgYi5jbGljaygpOyBicmVhazsgfX19IiIiKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgdGltZS5zbGVlcCgxMCkKICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgIGZpbmFsID0gcGFnZS5ldmFsdWF0ZSgiKCkgPT4gZG9jdW1lbnQuYm9keS5pbm5lclRleHQuc3Vic3RyaW5nKDAsIDUwMCkiKQogICAgICAgICAgICAgICAgICAgICAgICBwcmludChmIiAgRmluYWw6IHtmaW5hbFs6MzAwXX0iLCBmbHVzaD1UcnVlKQogICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgaWYgImJsb2NrZWQiIG5vdCBpbiBmaW5hbC5sb3dlcigpIGFuZCBsZW4oZmluYWwpID4gNTA6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwcmludChmIiAgWyoqKl0gU1VDQ0VTUyEgRW1haWw6IHtlbWFpbH0gLyB7cGFzc3dvcmR9IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHBhZ2Uuc2NyZWVuc2hvdChwYXRoPSJvdXRsb29rX3N1Y2Nlc3MucG5nIikKICAgICAgICAgICAgICAgICAgICAgICAgICAgIGJyb3dzZXIuY2xvc2UoKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJvYy50ZXJtaW5hdGUoKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgc3lzLmV4aXQoMCkKICAgICAgICAgICAgICAgICAgICAgICAgZWxpZiAiYmxvY2tlZCIgaW4gZmluYWwubG93ZXIoKToKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KGYiICBbIV0gQmxvY2tlZCIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgIGVsaWYgInZlcmlmaWNhdGlvbiIgaW4gZmluYWwubG93ZXIoKSBvciAidmVyaWZ5IiBpbiBmaW5hbC5sb3dlcigpOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgcHJpbnQoZiIgIFshXSBWZXJpZmljYXRpb24gc3RlcCByZWFjaGVkISIsIGZsdXNoPVRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYWdlLnNjcmVlbnNob3QocGF0aD0ib3V0bG9va192ZXJpZnkucG5nIikKICAgICAgICAgICAgICAgICAgICAgICAgICAgICMgQ2hlY2sgd2hhdCB0eXBlIG9mIHZlcmlmaWNhdGlvbgogICAgICAgICAgICAgICAgICAgICAgICAgICAgaW5wdXRzID0gcGFnZS5ldmFsdWF0ZSgiIiIoKSA9PiBBcnJheS5mcm9tKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ2lucHV0JykpLmZpbHRlcihlID0+IGUuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCkud2lkdGggPiAwKS5tYXAoZSA9PiAoe2lkOiBlLmlkLCB0eXBlOiBlLnR5cGUsIG5hbWU6IGUubmFtZX0pKSIiIikKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KGYiICBJbnB1dHM6IHtqc29uLmR1bXBzKGlucHV0cyl9IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgICAgICAgICBub19wd2QgPSBwYWdlLmV2YWx1YXRlKCIoKSA9PiBkb2N1bWVudC5ib2R5LmlubmVyVGV4dC5zdWJzdHJpbmcoMCwgMjAwKSIpCiAgICAgICAgICAgICAgICAgICAgICAgIHByaW50KGYiICBObyBwd2Q6IHtub19wd2RbOjEwMF19IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgIGVsc2U6CiAgICAgICAgICAgICAgICAgICAgcHJpbnQoZiIgIEJsb2NrZWQgb3IgZGlmZmVyZW50IHBhZ2U6IHtib2R5Wzo4MF19IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgYnJvd3Nlci5jbG9zZSgpCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICAgICAgICAgIHByaW50KGYiICBFcnJvcjoge3N0cihlKVs6MTUwXX0iLCBmbHVzaD1UcnVlKQogICAgICAgICAgICAgICAgdHJ5OiBicm93c2VyLmNsb3NlKCkKICAgICAgICAgICAgICAgIGV4Y2VwdDogcGFzcwogICAgICAgIAogICAgICAgIHByb2MudGVybWluYXRlKCkKICAgICAgICB0aW1lLnNsZWVwKDEpCiAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgcHJpbnQoZiIgIFhyYXkgZXJyOiB7c3RyKGUpWzoxMDBdfSIsIGZsdXNoPVRydWUpCiAgICAgICAgdHJ5OiBwcm9jLnRlcm1pbmF0ZSgpCiAgICAgICAgZXhjZXB0OiBwYXNzCgpwcmludCgiXG5bIV0gQWxsIGZhaWxlZCIsIGZsdXNoPVRydWUpCg==' | base64 -d > xray_reg.py
+          python xray_reg.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: '*.png'
