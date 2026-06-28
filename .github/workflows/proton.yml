@@ -1,4 +1,4 @@
-name: proton-v6
+name: proton-v7
 on:
   workflow_dispatch:
 
@@ -54,74 +54,73 @@ jobs:
               await page.waitForTimeout(12000);
               
               console.log(`[*] Title: ${await page.title()}`);
-              console.log(`[*] URL: ${page.url()}`);
-              
               await page.screenshot({ path: 'step1.png', fullPage: true });
               
               // Dump inputs
               const inputs = await page.evaluate(() => {
                   return Array.from(document.querySelectorAll('input')).map((i, idx) => ({
-                      idx, id: i.id, name: i.name, type: i.type,
-                      placeholder: i.placeholder,
-                      testid: i.getAttribute('data-testid'),
-                      ariaLabel: i.getAttribute('aria-label'),
-                      visible: i.offsetParent !== null
+                      idx, id: i.id, type: i.type, testid: i.getAttribute('data-testid'),
+                      visible: i.offsetParent !== null, disabled: i.disabled
                   }));
               });
-              console.log(`[*] Inputs: ${JSON.stringify(inputs, null, 2)}`);
+              console.log(`[*] Inputs: ${JSON.stringify(inputs)}`);
               
-              // Fill using evaluate with single arg object
-              const filled = await page.evaluate(({user, pwd}) => {
-                  const els = document.querySelectorAll('[data-testid="input-input-element"]');
-                  const results = [];
-                  
-                  for (let i = 0; i < els.length; i++) {
-                      const el = els[i];
-                      const isPassword = el.type === 'password';
-                      
-                      if (!isPassword && i === 0) {
-                          el.focus();
-                          el.value = user;
-                          el.dispatchEvent(new Event('input', { bubbles: true }));
-                          el.dispatchEvent(new Event('change', { bubbles: true }));
-                          results.push({ idx: i, filled: 'username', value: el.value });
-                      } else if (isPassword) {
-                          el.focus();
-                          el.value = pwd;
-                          el.dispatchEvent(new Event('input', { bubbles: true }));
-                          el.dispatchEvent(new Event('change', { bubbles: true }));
-                          results.push({ idx: i, filled: 'password' });
-                      }
-                  }
-                  return results;
-              }, { user: username, pwd: password });
-              console.log(`[*] Filled: ${JSON.stringify(filled)}`);
-              
-              await page.waitForTimeout(1000);
-              
-              // Verify fill worked
-              const vals = await page.evaluate(() => {
-                  const els = document.querySelectorAll('[data-testid="input-input-element"]');
-                  return Array.from(els).map(e => ({ type: e.type, value: e.value.substring(0, 20) }));
+              // Type into inputs using keyboard simulation
+              // Focus the first input (username) using evaluate, then type with keyboard
+              await page.evaluate(() => {
+                  const el = document.querySelector('[data-testid="input-input-element"]');
+                  if (el) { el.focus(); el.click(); }
               });
-              console.log(`[*] Values: ${JSON.stringify(vals)}`);
+              await page.waitForTimeout(500);
+              
+              // Clear any existing text and type username
+              await page.keyboard.press('Control+a');
+              await page.keyboard.type(username, { delay: 50 });
+              await page.waitForTimeout(500);
+              
+              // Verify username was typed
+              const userVal = await page.evaluate(() => {
+                  const el = document.querySelector('[data-testid="input-input-element"]');
+                  return el ? el.value : 'NOT FOUND';
+              });
+              console.log(`[*] Username value: ${userVal}`);
+              
+              // Tab to password field or focus it
+              await page.evaluate(() => {
+                  const els = document.querySelectorAll('[data-testid="input-input-element"]');
+                  if (els.length >= 2) { els[1].focus(); els[1].click(); }
+              });
+              await page.waitForTimeout(500);
+              
+              await page.keyboard.press('Control+a');
+              await page.keyboard.type(password, { delay: 50 });
+              await page.waitForTimeout(500);
+              
+              // Verify password
+              const pwdVal = await page.evaluate(() => {
+                  const els = document.querySelectorAll('[data-testid="input-input-element"]');
+                  return els.length >= 2 ? els[1].value : 'NOT FOUND';
+              });
+              console.log(`[*] Password value: ${pwdVal.substring(0, 3)}***`);
               
               await page.screenshot({ path: 'step2.png', fullPage: true });
               
-              // List all buttons
-              const btns = await page.evaluate(() => {
-                  return Array.from(document.querySelectorAll('button')).map(b => ({
-                      text: b.innerText.trim().substring(0, 60),
-                      testid: b.getAttribute('data-testid'),
-                      disabled: b.disabled
-                  }));
-              });
-              console.log(`[*] Buttons: ${JSON.stringify(btns, null, 2)}`);
+              // Check for third input (repeat password)
+              const inputCount = await page.evaluate(() => document.querySelectorAll('[data-testid="input-input-element"]').length);
+              if (inputCount >= 3) {
+                  console.log('[*] Found repeat password field');
+                  await page.evaluate(() => {
+                      const els = document.querySelectorAll('[data-testid="input-input-element"]');
+                      els[2].focus(); els[2].click();
+                  });
+                  await page.waitForTimeout(300);
+                  await page.keyboard.type(password, { delay: 50 });
+              }
               
-              // Click submit button
+              // Click submit
               const clicked = await page.evaluate(() => {
                   const btns = Array.from(document.querySelectorAll('button'));
-                  const targets = ['start using', 'create account', 'get started', 'sign up', 'next', 'continue', 'register'];
+                  const targets = ['start using', 'create account', 'get started', 'sign up', 'next', 'continue'];
                   for (const btn of btns) {
                       const text = btn.innerText.trim().toLowerCase();
                       if (targets.some(t => text.includes(t))) {
@@ -132,14 +131,6 @@ jobs:
                   return null;
               });
               console.log(`[*] Clicked: ${clicked}`);
-              
-              if (!clicked) {
-                  console.log('[!] No submit button found. Trying form submit...');
-                  await page.evaluate(() => {
-                      const form = document.querySelector('form');
-                      if (form) form.submit();
-                  });
-              }
               
               await page.waitForTimeout(10000);
               
@@ -159,28 +150,26 @@ jobs:
                       phone: t.includes('phone') || t.includes('Phone'),
                       captcha: h.includes('captcha') || h.includes('recaptcha'),
                       recovery: t.includes('recovery'),
-                      success: t.includes('Inbox') || t.includes('Welcome')
+                      success: t.includes('Inbox') || t.includes('Welcome'),
+                      sms: t.includes('SMS')
                   };
               });
               console.log(`[*] Verification: ${JSON.stringify(verify)}`);
               
-              // Try skipping steps
+              // Skip steps
               for (let s = 0; s < 5; s++) {
                   const skipped = await page.evaluate(() => {
                       const btns = Array.from(document.querySelectorAll('button, a'));
                       for (const btn of btns) {
                           const text = btn.innerText.trim().toLowerCase();
-                          if (text === 'skip' || text === 'skip for now' || text === 'maybe later' || text === 'not now') {
-                              btn.click();
-                              return btn.innerText.trim();
+                          if (text === 'skip' || text === 'skip for now' || text === 'maybe later') {
+                              btn.click(); return btn.innerText.trim();
                           }
                       }
                       return null;
                   });
-                  if (skipped) {
-                      console.log(`[*] Skipped: "${skipped}"`);
-                      await page.waitForTimeout(5000);
-                  } else break;
+                  if (skipped) { console.log(`[*] Skipped: "${skipped}"`); await page.waitForTimeout(5000); }
+                  else break;
               }
               
               // Final
@@ -193,12 +182,8 @@ jobs:
               console.log(`Password: ${password}`);
               
               await page.screenshot({ path: 'final.png', fullPage: true });
-              
               await browser.close();
-          })().catch(e => {
-              console.error('[-] Fatal:', e.message);
-              process.exit(1);
-          });
+          })().catch(e => { console.error('[-] Fatal:', e.message); process.exit(1); });
           JSEOF
           node register.js
       
@@ -206,6 +191,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proton-v6
+          name: proton-v7
           path: '*.png'
           retention-days: 1
