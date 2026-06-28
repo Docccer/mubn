@@ -1,0 +1,163 @@
+name: OpenAI Register
+on:
+  workflow_dispatch:
+
+jobs:
+  register:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm init -y
+          npm install playwright@1.52.0
+          npx playwright install chromium
+
+      - name: Register OpenAI
+        shell: pwsh
+        run: |
+          $code = @'
+          const { chromium } = require('playwright');
+          
+          (async () => {
+            const browser = await chromium.launch({ headless: true, args: ['--no-sandbox','--disable-blink-features=AutomationControlled'] });
+            const ctx = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36' });
+            const page = await ctx.newPage();
+            
+            page.on('console', msg => console.log('[PAGE]', msg.text()));
+            page.on('request', req => {
+              if(req.url().includes('openai') || req.url().includes('auth0') || req.url().includes('cloudflare'))
+                console.log('[REQ]', req.method(), req.url().substring(0, 120));
+            });
+            
+            console.log('=== Step 1: Navigate to ChatGPT ===');
+            try {
+              await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+            } catch(e) {
+              console.log('Nav error:', e.message.substring(0, 100));
+            }
+            await page.waitForTimeout(5000);
+            await page.screenshot({ path: 'C:/openai_step1.png', fullPage: false });
+            console.log('URL:', page.url());
+            console.log('Title:', await page.title());
+            
+            // Check for Turnstile
+            const turnstile = await page.$('iframe[src*="turnstile"], iframe[src*="challenges"]');
+            if(turnstile) {
+              console.log('=== TURNSTILE DETECTED ===');
+              await page.waitForTimeout(10000);
+              await page.screenshot({ path: 'C:/openai_turnstile.png', fullPage: false });
+            }
+            
+            // Look for Sign up
+            console.log('=== Looking for Sign up ===');
+            const allButtons = await page.$$eval('button, a[href*="signup"], a[href*="login"], a[href*="auth"]', els => 
+              els.map(e => ({ tag: e.tagName, text: (e.textContent||'').trim().substring(0,50), href: e.href||'', classes: e.className.substring(0,80) }))
+            );
+            console.log('Buttons:', JSON.stringify(allButtons.filter(b => b.text.length > 0).slice(0, 15)));
+            
+            // Try clicking Sign up
+            const signupBtn = await page.$('button:has-text("Sign up"), a:has-text("Sign up"), a:has-text("Get started"), a[href*="signup"]');
+            if(signupBtn) {
+              console.log('Found Sign up, clicking...');
+              await signupBtn.click();
+              await page.waitForTimeout(5000);
+              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
+              console.log('After signup URL:', page.url());
+            } else {
+              console.log('No Sign up button, trying direct auth');
+              try {
+                await page.goto('https://auth.openai.com/u/signup/identifier', { waitUntil: 'domcontentloaded', timeout: 20000 });
+              } catch(e) {}
+              await page.waitForTimeout(3000);
+              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
+            }
+            
+            // Look for email input
+            console.log('=== Looking for email input ===');
+            const emailInput = await page.$('input[name="email"], input[name="username"], input[type="email"], input#email, input[name="identifier"]');
+            if(emailInput) {
+              console.log('Found email input!');
+              await emailInput.fill('hxtest5adafcfa@hotmail.com');
+              await page.waitForTimeout(1000);
+              
+              // Look for Continue
+              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue")');
+              if(continueBtn) {
+                console.log('Clicking Continue...');
+                await continueBtn.click();
+                await page.waitForTimeout(8000);
+                await page.screenshot({ path: 'C:/openai_step3.png', fullPage: false });
+                console.log('After continue URL:', page.url());
+              }
+            } else {
+              console.log('No email input found');
+              const bodyText = await page.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2).map(t => t.trim().substring(0, 80)).slice(0, 30));
+              console.log('Page text:', JSON.stringify(bodyText));
+            }
+            
+            // Password page
+            const pwdInput = await page.$('input[name="password"], input[type="password"]');
+            if(pwdInput) {
+              console.log('=== Password page ===');
+              await pwdInput.fill('HxTest2026!@#');
+              await page.waitForTimeout(1000);
+              const submitBtn = await page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Sign up"), button:has-text("Create")');
+              if(submitBtn) {
+                await submitBtn.click();
+                await page.waitForTimeout(8000);
+                await page.screenshot({ path: 'C:/openai_step4.png', fullPage: false });
+                console.log('After password URL:', page.url());
+              }
+            }
+            
+            // Birthday page
+            const monthCombo = await page.$('[role="combobox"]');
+            if(monthCombo) {
+              console.log('=== Birthday page detected ===');
+              await page.screenshot({ path: 'C:/openai_birthday.png', fullPage: false });
+            }
+            
+            // Verification code page
+            const codeInput = await page.$('input[name="code"], input[name="otp"], input[autocomplete="one-time-code"]');
+            if(codeInput) {
+              console.log('=== Verification code page ===');
+              await page.screenshot({ path: 'C:/openai_verify.png', fullPage: false });
+            }
+            
+            // Check for logged in state
+            console.log('=== Final State ===');
+            console.log('URL:', page.url());
+            console.log('Title:', await page.title());
+            await page.screenshot({ path: 'C:/openai_final.png', fullPage: false });
+            
+            // If we got to ChatGPT, try to get API key
+            const url = page.url();
+            if(url.includes('chat.openai.com') && !url.includes('auth')) {
+              console.log('=== Possibly logged in! Navigating to API keys ===');
+              try {
+                await page.goto('https://platform.openai.com/api-keys', { waitUntil: 'domcontentloaded', timeout: 20000 });
+              } catch(e) {}
+              await page.waitForTimeout(5000);
+              await page.screenshot({ path: 'C:/openai_apikeys.png', fullPage: false });
+              console.log('API keys URL:', page.url());
+            }
+            
+            await browser.close();
+            console.log('=== DONE ===');
+          })().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
+          '@
+          Set-Content -Path "C:\register_openai.js" -Value $code
+          node C:\register_openai.js
+
+      - name: Upload Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openai-screenshots
+          path: C:/openai_*.png
