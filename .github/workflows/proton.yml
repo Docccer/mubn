@@ -1,4 +1,4 @@
-name: proton-v3
+name: proton-v4
 on:
   workflow_dispatch:
 
@@ -21,7 +21,6 @@ jobs:
           cat > register.js << 'JSEOF'
           const { chromium } = require('playwright');
           const crypto = require('crypto');
-          const fs = require('fs');
           
           const rand = crypto.randomBytes(4).toString('hex');
           const username = `hxtest${rand}`;
@@ -47,219 +46,151 @@ jobs:
                   Object.defineProperty(navigator, 'webdriver', { get: () => false });
               });
               
-              // Navigate to signup
+              // Navigate directly with plan=free parameter
               console.log('[*] Navigating to ProtonMail signup...');
-              await page.goto('https://account.proton.me/signup', { 
+              await page.goto('https://account.proton.me/signup?plan=free', { 
                   waitUntil: 'domcontentloaded', 
                   timeout: 30000 
               });
-              await page.waitForTimeout(8000);
+              await page.waitForTimeout(10000);
               
               let title = await page.title();
               console.log(`[*] Title: ${title}`);
               console.log(`[*] URL: ${page.url()}`);
               
-              // Get all elements with data-testid
-              const testIds = await page.evaluate(() => {
-                  return Array.from(document.querySelectorAll('[data-testid]')).map(e => ({
-                      tag: e.tagName,
-                      testid: e.getAttribute('data-testid'),
-                      text: e.innerText.trim().substring(0, 60),
-                      href: e.href || ''
-                  }));
-              });
-              console.log(`[*] data-testid elements: ${JSON.stringify(testIds, null, 2)}`);
+              // Screenshot
+              await page.screenshot({ path: 'step1.png', fullPage: true });
               
-              // Look for the Free plan button more carefully
-              // The text includes "Free\nUS$0\n..."
-              const freeBtn = await page.locator('[data-testid*="free"], [data-testid*="Free"]').first();
-              
-              if (await freeBtn.count() > 0) {
-                  console.log('[*] Found Free plan by testid, clicking...');
-                  await freeBtn.click();
-              } else {
-                  // Try finding by text content
-                  const allBtns = await page.$$('button, a');
-                  for (const btn of allBtns) {
-                      const text = await btn.innerText().catch(() => '');
-                      if (text.startsWith('Free') && text.includes('US$0')) {
-                          console.log('[*] Found Free plan by text, clicking...');
-                          await btn.click();
-                          break;
-                      }
-                  }
-              }
-              
-              // Wait for navigation or form to appear
-              await page.waitForTimeout(5000);
-              
-              title = await page.title();
-              console.log(`[*] After Free click - Title: ${title}`);
-              console.log(`[*] After Free click - URL: ${page.url()}`);
-              
-              // Check for any new inputs
-              const inputs1 = await page.evaluate(() => {
+              // Get all inputs with their full attributes
+              const allInputs = await page.evaluate(() => {
                   return Array.from(document.querySelectorAll('input')).map(i => ({
-                      id: i.id, name: i.name, type: i.type,
+                      id: i.id,
+                      name: i.name,
+                      type: i.type,
                       placeholder: i.placeholder,
+                      testid: i.getAttribute('data-testid'),
                       ariaLabel: i.getAttribute('aria-label'),
+                      className: i.className.substring(0, 60),
+                      value: i.value,
                       visible: i.offsetParent !== null
                   }));
               });
-              console.log(`[*] Inputs after Free: ${JSON.stringify(inputs1, null, 2)}`);
+              console.log(`[*] All inputs: ${JSON.stringify(allInputs, null, 2)}`);
               
-              await page.screenshot({ path: 'step1.png', fullPage: true });
+              // Use data-testid to find the input elements
+              // ProtonMail uses testid="input-input-element" for form inputs
+              const inputElements = await page.$$('[data-testid="input-input-element"]');
+              console.log(`[*] Found ${inputElements.length} input-input-element elements`);
               
-              // If we're still on the pricing page, try navigating directly to the signup form
-              if (page.url().includes('/signup') && inputs1.length === 0) {
-                  console.log('[*] Still on pricing page. Trying direct signup URL...');
+              // The first one should be email/username, second should be password
+              if (inputElements.length >= 2) {
+                  console.log('[*] Filling email/username...');
+                  await inputElements[0].click();
+                  await inputElements[0].fill(username);
+                  await page.waitForTimeout(500);
                   
-                  // Try different signup URLs
-                  const urls = [
-                      'https://account.proton.me/signup?plan=free',
-                      'https://account.proton.me/signup?product=mail&plan=free',
-                      'https://account.proton.me/mail/signup/free',
-                      'https://account.proton.me/signup?lang=en'
-                  ];
+                  console.log('[*] Filling password...');
+                  await inputElements[1].click();
+                  await inputElements[1].fill(password);
+                  await page.waitForTimeout(500);
                   
-                  for (const url of urls) {
-                      console.log(`[*] Trying: ${url}`);
-                      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                      await page.waitForTimeout(3000);
-                      
-                      const newInputs = await page.evaluate(() => {
-                          return Array.from(document.querySelectorAll('input')).map(i => ({
-                              id: i.id, type: i.type, placeholder: i.placeholder
-                          }));
-                      });
-                      
-                      if (newInputs.length > 0) {
-                          console.log(`[*] Found ${newInputs.length} inputs at ${url}`);
-                          console.log(`[*] Inputs: ${JSON.stringify(newInputs)}`);
-                          break;
-                      }
+                  // Check for repeat password field
+                  if (inputElements.length >= 3) {
+                      console.log('[*] Filling repeat password...');
+                      await inputElements[2].click();
+                      await inputElements[2].fill(password);
+                      await page.waitForTimeout(500);
                   }
+              } else if (inputElements.length === 1) {
+                  // Might be just password - try filling it
+                  console.log('[*] Only 1 input found, trying as password...');
+                  await inputElements[0].fill(password);
               }
               
-              // Now try to find and fill the signup form
-              // ProtonMail might have a multi-step form
+              await page.screenshot({ path: 'step2.png', fullPage: true });
               
-              // Step 1: Look for email/username input
-              const emailInput = await page.$('#email') || 
-                                 await page.$('input[name="email"]') ||
-                                 await page.$('input[id*="email"]') ||
-                                 await page.$('input[aria-label*="email" i]') ||
-                                 await page.$('input[aria-label*="user" i]') ||
-                                 await page.$('input[type="text"]');
-              
-              if (emailInput) {
-                  const inputInfo = await emailInput.evaluate(e => ({
-                      id: e.id, type: e.type, placeholder: e.placeholder,
-                      ariaLabel: e.getAttribute('aria-label')
-                  }));
-                  console.log(`[*] Found email input: ${JSON.stringify(inputInfo)}`);
-                  await emailInput.fill(username);
-                  console.log('[*] Username filled');
-              } else {
-                  console.log('[!] No email input found');
-                  
-                  // Dump the full page HTML for analysis
-                  const html = await page.content();
-                  fs.writeFileSync('page.html', html);
-                  console.log(`[*] Page HTML saved (${html.length} bytes)`);
-                  
-                  // Get all form elements
-                  const formEls = await page.evaluate(() => {
-                      return Array.from(document.querySelectorAll('form, fieldset, [role="form"]')).map(f => ({
-                          tag: f.tagName,
-                          id: f.id,
-                          action: f.action || '',
-                          inputs: Array.from(f.querySelectorAll('input')).length
-                      }));
-                  });
-                  console.log(`[*] Form elements: ${JSON.stringify(formEls)}`);
-              }
-              
-              // Step 2: Look for password field
-              const pwdInput = await page.$('#password') ||
-                               await page.$('input[type="password"]');
-              
-              if (pwdInput) {
-                  await pwdInput.fill(password);
-                  console.log('[*] Password filled');
-              }
-              
-              // Step 3: Look for repeat password
-              const pwdInputs = await page.$$('input[type="password"]');
-              if (pwdInputs.length >= 2) {
-                  await pwdInputs[1].fill(password);
-                  console.log('[*] Repeat password filled');
-              }
-              
-              // Step 4: Submit
-              const submitBtn = await page.$('button[type="submit"]') ||
+              // Look for submit button
+              const submitBtn = await page.$('button[data-testid="submit-button"]') ||
+                                await page.$('button[type="submit"]') ||
+                                await page.$('button:has-text("Start using")') ||
                                 await page.$('button:has-text("Create")') ||
                                 await page.$('button:has-text("Next")') ||
                                 await page.$('button:has-text("Sign up")');
               
               if (submitBtn) {
                   const btnText = await submitBtn.innerText();
-                  console.log(`[*] Found submit button: "${btnText}", clicking...`);
+                  console.log(`[*] Submit button: "${btnText}"`);
                   await submitBtn.click();
-                  await page.waitForTimeout(8000);
+                  console.log('[*] Clicked submit');
+                  await page.waitForTimeout(10000);
+              } else {
+                  console.log('[!] No submit button found');
                   
-                  title = await page.title();
-                  console.log(`[*] After submit - Title: ${title}`);
-                  console.log(`[*] After submit - URL: ${page.url()}`);
-                  
-                  const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
-                  console.log(`[*] After submit - Body: ${bodyText}`);
-                  
-                  await page.screenshot({ path: 'step2.png', fullPage: true });
-                  
-                  // Check what verification is needed
-                  const verifyInfo = await page.evaluate(() => {
-                      const t = document.body.innerText;
-                      return {
-                          phone: t.includes('phone') || t.includes('Phone') || t.includes('mobile'),
-                          captcha: t.includes('captcha') || t.includes('CAPTCHA'),
-                          recovery: t.includes('recovery') || t.includes('Recovery'),
-                          verify: t.includes('verify') || t.includes('Verify'),
-                          success: t.includes('success') || t.includes('Welcome') || t.includes('Inbox')
-                      };
+                  // Get all buttons
+                  const btns = await page.evaluate(() => {
+                      return Array.from(document.querySelectorAll('button')).map(b => ({
+                          text: b.innerText.trim().substring(0, 50),
+                          testid: b.getAttribute('data-testid'),
+                          type: b.type
+                      }));
                   });
-                  console.log(`[*] Verification needed: ${JSON.stringify(verifyInfo)}`);
-                  
-                  // If phone verification, we need to handle it
-                  if (verifyInfo.phone) {
-                      console.log('[!] Phone verification required');
-                      
-                      // Check for "Skip" option
-                      const skipBtn = await page.$('button:has-text("Skip")') ||
-                                      await page.$('a:has-text("Skip")');
-                      if (skipBtn) {
-                          console.log('[*] Found Skip button, clicking...');
-                          await skipBtn.click();
-                          await page.waitForTimeout(5000);
-                      }
+                  console.log(`[*] All buttons: ${JSON.stringify(btns, null, 2)}`);
+              }
+              
+              // Check result
+              title = await page.title();
+              const url = page.url();
+              const body = await page.evaluate(() => document.body.innerText.substring(0, 500));
+              console.log(`[*] After submit - Title: ${title}`);
+              console.log(`[*] After submit - URL: ${url}`);
+              console.log(`[*] After submit - Body: ${body}`);
+              
+              await page.screenshot({ path: 'step3.png', fullPage: true });
+              
+              // Check for verification steps
+              const verifyInfo = await page.evaluate(() => {
+                  const t = document.body.innerText;
+                  const h = document.body.innerHTML.toLowerCase();
+                  return {
+                      phone: t.includes('phone') || t.includes('Phone') || t.includes('mobile'),
+                      captcha: h.includes('captcha'),
+                      recovery: t.includes('recovery') || t.includes('Recovery'),
+                      verify: t.includes('verify') || t.includes('Verify'),
+                      success: t.includes('Inbox') || t.includes('Welcome'),
+                      sms: t.includes('SMS') || t.includes('sms'),
+                      recoveryEmail: t.includes('recovery email')
+                  };
+              });
+              console.log(`[*] Verification: ${JSON.stringify(verifyInfo)}`);
+              
+              // Handle verification
+              if (verifyInfo.phone || verifyInfo.sms) {
+                  console.log('[!] Phone/SMS verification required');
+                  // Try to skip
+                  const skipBtn = await page.$('button:has-text("Skip")') ||
+                                  await page.$('a:has-text("Skip")') ||
+                                  await page.$('[data-testid="skip-button"]');
+                  if (skipBtn) {
+                      console.log('[*] Clicking Skip...');
+                      await skipBtn.click();
+                      await page.waitForTimeout(5000);
                   }
-                  
-                  // If recovery email, try to skip
-                  if (verifyInfo.recovery) {
-                      const skipBtn = await page.$('button:has-text("Skip")') ||
-                                      await page.$('a:has-text("Skip")');
-                      if (skipBtn) {
-                          console.log('[*] Skipping recovery...');
-                          await skipBtn.click();
-                          await page.waitForTimeout(5000);
-                      }
+              }
+              
+              if (verifyInfo.recovery) {
+                  console.log('[!] Recovery email step');
+                  const skipBtn = await page.$('button:has-text("Skip")') ||
+                                  await page.$('a:has-text("Skip")');
+                  if (skipBtn) {
+                      await skipBtn.click();
+                      await page.waitForTimeout(5000);
                   }
               }
               
               // Final state
               title = await page.title();
               const finalBody = await page.evaluate(() => document.body.innerText.substring(0, 500));
-              console.log(`\n=== FINAL STATE ===`);
+              console.log(`\n=== FINAL ===`);
               console.log(`Title: ${title}`);
               console.log(`URL: ${page.url()}`);
               console.log(`Body: ${finalBody}`);
@@ -281,8 +212,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proton-results
-          path: |
-            *.png
-            *.html
+          name: proton-v4
+          path: '*.png'
           retention-days: 1
