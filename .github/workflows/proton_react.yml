@@ -1,0 +1,186 @@
+name: proton-react-fix
+on:
+  workflow_dispatch:
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -yqq libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxrandr2 libgbm1 libasound2 libxshmfence1 libgtk-3-0
+        pip install playwright
+        playwright install chromium
+        playwright install-deps chromium
+
+    - name: Register ProtonMail
+      shell: bash
+      run: |
+        python3 << 'PYEOF'
+import sys, time, random, string
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+from playwright.sync_api import sync_playwright
+
+suffix = ''.join(random.choices(string.hexdigits[:16], k=8))
+username = f"hxtest{suffix}"
+password = "HxTest2026!@#"
+print(f"[*] Username: {username}")
+print(f"[*] Password: {password}")
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    page = browser.new_page(viewport={'width': 1280, 'height': 900})
+    page.goto('https://account.proton.me/signup?plan=free', timeout=60000)
+    page.wait_for_load_state('networkidle', timeout=60000)
+    time.sleep(5)
+    
+    # Close any popups
+    for sel in ['button:has-text("Close")', 'button:has-text("No thanks")', 'button:has-text("Skip")']:
+        try:
+            btn = page.locator(sel)
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                print(f"[*] Closed popup: {sel}")
+                time.sleep(1)
+        except:
+            pass
+    
+    page.screenshot(path="step1.png")
+    print("[*] step1.png saved")
+    
+    # Find the username input using React setter pattern
+    # This is the key fix: use native setter + dispatch input event
+    result = page.evaluate("""() => {
+        // Find the username input
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        const usernameInput = inputs[0];
+        const passwordInput = inputs[1];
+        
+        if (!usernameInput) return {error: 'No username input found'};
+        if (!passwordInput) return {error: 'No password input found'};
+        
+        // Check visibility
+        const uRect = usernameInput.getBoundingClientRect();
+        const uStyle = window.getComputedStyle(usernameInput);
+        const pRect = passwordInput.getBoundingClientRect();
+        
+        // React setter pattern - this properly updates React's internal state
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        
+        // Set username
+        nativeInputValueSetter.call(usernameInput, '%s');
+        usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+        usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        // Set password
+        nativeInputValueSetter.call(passwordInput, '%s');
+        passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+        passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        // Check if password-confirm exists
+        const confirmInput = document.getElementById('password-confirm') || 
+                            document.querySelectorAll('[data-testid="input-input-element"]')[2];
+        if (confirmInput) {
+            nativeInputValueSetter.call(confirmInput, '%s');
+            confirmInput.dispatchEvent(new Event('input', { bubbles: true }));
+            confirmInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        
+        return {
+            username: usernameInput.value,
+            password: passwordInput.value,
+            confirm: confirmInput ? confirmInput.value : 'not found',
+            usernameRect: {x: uRect.x, y: uRect.y, w: uRect.width, h: uRect.height},
+            usernameVisibility: uStyle.visibility,
+        };
+    }""" % (username, password, password))
+    
+    print(f"[*] Result: {result}")
+    page.screenshot(path="step2.png")
+    print("[*] step2.png saved")
+    
+    # Now try to click the submit button
+    time.sleep(2)
+    
+    # First, try clicking "Use your current email instead" to see if that form is easier
+    try:
+        email_instead = page.locator('button:has-text("Use your current email instead")')
+        if email_instead.is_visible(timeout=3000):
+            print("[*] Found 'Use your current email instead' button")
+            email_instead.click()
+            time.sleep(3)
+            page.screenshot(path="step_email_mode.png")
+            print("[*] step_email_mode.png saved")
+            
+            # In email mode, there might be an email input instead of username
+            email_input = page.locator('input[type="email"], input[name="email"], [data-testid="input-input-element"]').first
+            if email_input.is_visible(timeout=3000):
+                print(f"[*] Email input found, filling with {username}@proton.me")
+                native_set = """(el) => {
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    nativeInputValueSetter.call(el, arguments[1]);
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }"""
+                # Can't pass args to evaluate with % formatting, use a different approach
+                page.evaluate(f"""() => {{
+                    const el = document.querySelector('input[type="email"], [data-testid="input-input-element"]');
+                    if (el) {{
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(el, '{username}@proton.me');
+                        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                }}""")
+                page.screenshot(path="step_email_filled.png")
+    except Exception as e:
+        print(f"[*] Email mode: {e}")
+    
+    # Try submit
+    try:
+        submit = page.locator('button:has-text("Start using Proton Mail now"), button[type="submit"]')
+        if submit.is_visible(timeout=3000):
+            print("[*] Clicking submit...")
+            submit.click()
+            time.sleep(5)
+            page.screenshot(path="step3.png")
+            print("[*] step3.png saved")
+            
+            # Check if page changed
+            url = page.url
+            title = page.title()
+            print(f"[*] After submit: {url}")
+            print(f"[*] Title: {title}")
+            
+            if 'signup' not in url:
+                print("[!] SUCCESS - past signup page!")
+            else:
+                print("[!] Still on signup page")
+                
+                # Check for error messages
+                errors = page.locator('[class*="error"], [class*="alert"], [role="alert"]')
+                for i in range(errors.count()):
+                    text = errors.nth(i).text_content()
+                    if text.strip():
+                        print(f"[!] Error: {text.strip()[:100]}")
+    except Exception as e:
+        print(f"[*] Submit: {e}")
+    
+    # Final screenshot
+    page.screenshot(path="final.png")
+    print("[*] final.png saved")
+    
+    # Save HTML for analysis
+    html = page.content()
+    with open('page.html', 'w') as f:
+        f.write(html)
+    print(f"[*] page.html saved ({len(html)} bytes)")
+    
+    browser.close()
+
+print(f"\n=== CREDENTIALS ===")
+print(f"Username: {username}")
+print(f"Password: {password}")
+print(f"Email: {username}@proton.me")
+print("=== END ===")
+PYEOF
