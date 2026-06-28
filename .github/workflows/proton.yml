@@ -1,4 +1,4 @@
-name: proton-register
+name: email-register
 on:
   workflow_dispatch:
 
@@ -16,17 +16,18 @@ jobs:
           npm install playwright
           npx playwright install chromium --with-deps
       
-      - name: Register ProtonMail
+      - name: Register Email
         run: |
           cat > register.js << 'JSEOF'
           const { chromium } = require('playwright');
           const crypto = require('crypto');
+          const fs = require('fs');
           
           const rand = crypto.randomBytes(4).toString('hex');
           const username = `hxtest${rand}`;
           const password = 'HxTest2026!@#';
           
-          console.log(`[*] Username: ${username}@proton.me`);
+          console.log(`[*] Username: ${username}`);
           console.log(`[*] Password: ${password}`);
           
           (async () => {
@@ -42,159 +43,270 @@ jobs:
               
               const page = await context.newPage();
               
-              // Override webdriver
               await page.addInitScript(() => {
                   Object.defineProperty(navigator, 'webdriver', { get: () => false });
               });
               
-              console.log('[*] Navigating to ProtonMail signup...');
-              await page.goto('https://account.proton.me/signup', { waitUntil: 'networkidle', timeout: 60000 });
-              
-              const title = await page.title();
-              console.log(`[*] Title: ${title}`);
-              
-              // Wait for SPA to render
-              await page.waitForTimeout(5000);
-              
-              // Screenshot
-              await page.screenshot({ path: 'proton1.png', fullPage: true });
-              
-              // Get all text
-              const bodyText = await page.evaluate(() => document.body.innerText);
-              console.log(`[*] Body text (first 500): ${bodyText.substring(0, 500)}`);
-              
-              // Get all inputs
-              const inputs = await page.evaluate(() => {
-                  return Array.from(document.querySelectorAll('input')).map(i => ({
-                      id: i.id, name: i.name, type: i.type,
-                      placeholder: i.placeholder,
-                      ariaLabel: i.getAttribute('aria-label')
-                  }));
-              });
-              console.log(`[*] Inputs: ${JSON.stringify(inputs, null, 2)}`);
-              
-              // Get all buttons
-              const buttons = await page.evaluate(() => {
-                  return Array.from(document.querySelectorAll('button, a[role="button"], [data-testid]')).map(b => ({
-                      text: b.innerText.trim().substring(0, 50),
-                      testid: b.getAttribute('data-testid'),
-                      tag: b.tagName
-                  }));
-              });
-              console.log(`[*] Buttons: ${JSON.stringify(buttons, null, 2)}`);
-              
-              // Check for CAPTCHA
-              const captchaCheck = await page.evaluate(() => {
-                  const html = document.body.innerHTML.toLowerCase();
-                  return {
-                      recaptcha: html.includes('recaptcha'),
-                      hcaptcha: html.includes('hcaptcha'),
-                      funcaptcha: html.includes('funcaptcha'),
-                      captcha: html.includes('captcha'),
-                      perimeterx: html.includes('perimeterx') || html.includes('hsprotect'),
-                      turnstile: html.includes('turnstile'),
-                      cloudflare: html.includes('cloudflare')
-                  };
-              });
-              console.log(`[*] CAPTCHA: ${JSON.stringify(captchaCheck)}`);
-              
-              // Try to find "Free" plan or "Create a free account"
-              const freeLink = await page.$('a:has-text("Free")') || 
-                               await page.$('button:has-text("Free")') ||
-                               await page.$('[data-testid="free-plan"]') ||
-                               await page.$('a:has-text("Get started")');
-              
-              if (freeLink) {
-                  console.log('[*] Found free plan link, clicking...');
-                  await freeLink.click();
-                  await page.waitForTimeout(5000);
-                  await page.screenshot({ path: 'proton2.png', fullPage: true });
-                  
-                  const newInputs = await page.evaluate(() => {
-                      return Array.from(document.querySelectorAll('input')).map(i => ({
-                          id: i.id, name: i.name, type: i.type,
-                          placeholder: i.placeholder
-                      }));
+              // Try ProtonMail first
+              console.log('\n=== TRYING PROTONMAIL ===');
+              try {
+                  await page.goto('https://account.proton.me/signup', { 
+                      waitUntil: 'domcontentloaded', 
+                      timeout: 30000 
                   });
-                  console.log(`[*] Inputs after click: ${JSON.stringify(newInputs, null, 2)}`);
-              }
-              
-              // Try to find and fill username/email field
-              const emailField = await page.$('#email') ||
-                                 await page.$('input[autocomplete="email"]') ||
-                                 await page.$('input[type="text"]');
-              
-              if (emailField) {
-                  console.log('[*] Found email field, filling...');
-                  await emailField.fill(username);
-                  await page.waitForTimeout(1000);
-              }
-              
-              // Look for password field
-              const pwdField = await page.$('#password') ||
-                               await page.$('input[type="password"]');
-              
-              if (pwdField) {
-                  console.log('[*] Found password field, filling...');
-                  await pwdField.fill(password);
-                  await page.waitForTimeout(1000);
-              }
-              
-              // Look for repeat password
-              const pwd2Field = await page.$('#repeat-password') ||
-                                await page.$$('input[type="password"]');
-              
-              if (Array.isArray(pwd2Field) && pwd2Field.length > 1) {
-                  console.log('[*] Found repeat password field, filling...');
-                  await pwd2Field[1].fill(password);
-              }
-              
-              await page.screenshot({ path: 'proton3.png', fullPage: true });
-              
-              // Get the full page HTML for analysis
-              const html = await page.content();
-              require('fs').writeFileSync('proton_page.html', html);
-              console.log(`[*] Page HTML saved (${html.length} bytes)`);
-              
-              // Try clicking "Create account" or similar
-              const createBtn = await page.$('button:has-text("Create account")') ||
-                                await page.$('button:has-text("Create")') ||
-                                await page.$('button:has-text("Sign up")') ||
-                                await page.$('button[type="submit"]');
-              
-              if (createBtn) {
-                  const btnText = await createBtn.innerText();
-                  console.log(`[*] Found button: "${btnText}", clicking...`);
-                  await createBtn.click();
-                  await page.waitForTimeout(10000);
+                  await page.waitForTimeout(8000);
                   
-                  const newTitle = await page.title();
-                  const newBody = await page.evaluate(() => document.body.innerText.substring(0, 500));
-                  console.log(`[*] After click - Title: ${newTitle}`);
-                  console.log(`[*] After click - Body: ${newBody}`);
+                  const title = await page.title();
+                  console.log(`[*] Proton title: ${title}`);
                   
-                  await page.screenshot({ path: 'proton4.png', fullPage: true });
+                  const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 800));
+                  console.log(`[*] Proton body: ${bodyText.substring(0, 500)}`);
                   
-                  // Check for CAPTCHA again
-                  const captchaCheck2 = await page.evaluate(() => {
-                      const html = document.body.innerHTML.toLowerCase();
+                  // Get all links and buttons
+                  const links = await page.evaluate(() => {
+                      return Array.from(document.querySelectorAll('a, button')).map(e => ({
+                          tag: e.tagName,
+                          text: e.innerText.trim().substring(0, 50),
+                          href: e.href || '',
+                          testid: e.getAttribute('data-testid') || ''
+                      })).filter(e => e.text);
+                  });
+                  console.log(`[*] Links/Buttons: ${JSON.stringify(links.slice(0, 20), null, 2)}`);
+                  
+                  await page.screenshot({ path: 'proton1.png', fullPage: true });
+                  
+                  // Check for CAPTCHA
+                  const captcha = await page.evaluate(() => {
+                      const h = document.body.innerHTML.toLowerCase();
                       return {
-                          recaptcha: html.includes('recaptcha'),
-                          hcaptcha: html.includes('hcaptcha'),
-                          captcha: html.includes('captcha'),
-                          human: html.includes('prove') || html.includes('human')
+                          recaptcha: h.includes('recaptcha'),
+                          hcaptcha: h.includes('hcaptcha'),
+                          captcha: h.includes('captcha'),
+                          turnstile: h.includes('turnstile')
                       };
                   });
-                  console.log(`[*] CAPTCHA after submit: ${JSON.stringify(captchaCheck2)}`);
+                  console.log(`[*] Proton CAPTCHA: ${JSON.stringify(captcha)}`);
+                  
+                  // Try to click "Free" plan
+                  const freeLink = await page.$('a[href*="free"]') || 
+                                   await page.$('button:has-text("Free")') ||
+                                   await page.$('a:has-text("Free")');
+                  
+                  if (freeLink) {
+                      console.log('[*] Clicking Free plan...');
+                      await freeLink.click();
+                      await page.waitForTimeout(5000);
+                  }
+                  
+                  // Try to fill username
+                  const emailInput = await page.$('#email') || 
+                                     await page.$('input[name="email"]') ||
+                                     await page.$('input[type="text"]');
+                  
+                  if (emailInput) {
+                      console.log('[*] Filling username...');
+                      await emailInput.fill(username);
+                      await page.waitForTimeout(1000);
+                      
+                      // Look for "Next" or "Continue" button
+                      const nextBtn = await page.$('button:has-text("Next")') ||
+                                      await page.$('button:has-text("Continue")') ||
+                                      await page.$('button[type="submit"]');
+                      
+                      if (nextBtn) {
+                          console.log('[*] Clicking next...');
+                          await nextBtn.click();
+                          await page.waitForTimeout(5000);
+                      }
+                  }
+                  
+                  await page.screenshot({ path: 'proton2.png', fullPage: true });
+                  
+                  // Get updated page
+                  const body2 = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                  console.log(`[*] Proton after step: ${body2.substring(0, 300)}`);
+                  
+                  // Check for password fields
+                  const pwdFields = await page.$$('input[type="password"]');
+                  console.log(`[*] Password fields: ${pwdFields.length}`);
+                  
+                  if (pwdFields.length >= 1) {
+                      await pwdFields[0].fill(password);
+                      if (pwdFields.length >= 2) {
+                          await pwdFields[1].fill(password);
+                      }
+                      
+                      // Submit
+                      const submitBtn = await page.$('button[type="submit"]') ||
+                                        await page.$('button:has-text("Create")');
+                      
+                      if (submitBtn) {
+                          console.log('[*] Submitting...');
+                          await submitBtn.click();
+                          await page.waitForTimeout(10000);
+                          
+                          const finalTitle = await page.title();
+                          const finalBody = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                          console.log(`[*] After submit - Title: ${finalTitle}`);
+                          console.log(`[*] After submit - Body: ${finalBody}`);
+                          
+                          await page.screenshot({ path: 'proton3.png', fullPage: true });
+                      }
+                  }
+                  
+                  // Check for verification/captcha
+                  const verifyCheck = await page.evaluate(() => {
+                      const h = document.body.innerHTML.toLowerCase();
+                      const t = document.body.innerText;
+                      return {
+                          captcha: h.includes('captcha'),
+                          phone: t.includes('phone') || t.includes('mobile'),
+                          recovery: t.includes('recovery'),
+                          verify: t.includes('verify') || t.includes('verification')
+                      };
+                  });
+                  console.log(`[*] Verification check: ${JSON.stringify(verifyCheck)}`);
+                  
+              } catch(e) {
+                  console.log(`[-] ProtonMail failed: ${e.message}`);
               }
               
-              console.log(`\n=== RESULT ===`);
-              console.log(`Email: ${username}@proton.me`);
-              console.log(`Password: ${password}`);
+              // Try Yandex
+              console.log('\n=== TRYING YANDEX ===');
+              try {
+                  await page.goto('https://passport.yandex.com/registration', {
+                      waitUntil: 'domcontentloaded',
+                      timeout: 30000
+                  });
+                  await page.waitForTimeout(5000);
+                  
+                  const title = await page.title();
+                  console.log(`[*] Yandex title: ${title}`);
+                  
+                  const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                  console.log(`[*] Yandex body: ${bodyText.substring(0, 300)}`);
+                  
+                  await page.screenshot({ path: 'yandex1.png', fullPage: true });
+                  
+                  // Check for CAPTCHA
+                  const captcha = await page.evaluate(() => {
+                      const h = document.body.innerHTML.toLowerCase();
+                      return {
+                          smartcaptcha: h.includes('smartcaptcha'),
+                          recaptcha: h.includes('recaptcha'),
+                          hcaptcha: h.includes('hcaptcha'),
+                          captcha: h.includes('captcha')
+                      };
+                  });
+                  console.log(`[*] Yandex CAPTCHA: ${JSON.stringify(captcha)}`);
+                  
+                  // Fill form
+                  const loginInput = await page.$('#login') || 
+                                     await page.$('input[name="login"]');
+                  
+                  if (loginInput) {
+                      await loginInput.fill(username);
+                      await page.waitForTimeout(1000);
+                  }
+                  
+                  const pwdInput = await page.$('#password') || 
+                                   await page.$('input[name="password"]');
+                  
+                  if (pwdInput) {
+                      await pwdInput.fill(password);
+                      await page.waitForTimeout(1000);
+                  }
+                  
+                  const pwdConfirm = await page.$('#password_confirm') || 
+                                     await page.$('input[name="password_confirm"]');
+                  
+                  if (pwdConfirm) {
+                      await pwdConfirm.fill(password);
+                      await page.waitForTimeout(1000);
+                  }
+                  
+                  // Fill name fields
+                  const fnInput = await page.$('#firstname') || 
+                                  await page.$('input[name="firstname"]');
+                  if (fnInput) await fnInput.fill('Test');
+                  
+                  const lnInput = await page.$('#lastname') || 
+                                  await page.$('input[name="lastname"]');
+                  if (lnInput) await lnInput.fill('User');
+                  
+                  await page.screenshot({ path: 'yandex2.png', fullPage: true });
+                  
+                  // Try to submit
+                  const submitBtn = await page.$('button[type="submit"]') ||
+                                    await page.$('button:has-text("Register")');
+                  
+                  if (submitBtn) {
+                      console.log('[*] Submitting Yandex...');
+                      await submitBtn.click();
+                      await page.waitForTimeout(10000);
+                      
+                      const finalTitle = await page.title();
+                      const finalBody = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                      console.log(`[*] Yandex after submit - Title: ${finalTitle}`);
+                      console.log(`[*] Yandex after submit - Body: ${finalBody}`);
+                      
+                      await page.screenshot({ path: 'yandex3.png', fullPage: true });
+                      
+                      // Check verification
+                      const verifyCheck = await page.evaluate(() => {
+                          const h = document.body.innerHTML.toLowerCase();
+                          const t = document.body.innerText;
+                          return {
+                              captcha: h.includes('captcha'),
+                              phone: t.includes('phone') || t.includes('mobile') || t.includes('SMS'),
+                              success: t.includes('successfully') || t.includes('welcome')
+                          };
+                      });
+                      console.log(`[*] Yandex verification: ${JSON.stringify(verifyCheck)}`);
+                  }
+                  
+              } catch(e) {
+                  console.log(`[-] Yandex failed: ${e.message}`);
+              }
+              
+              // Try Mail.ru
+              console.log('\n=== TRYING MAIL.RU ===');
+              try {
+                  await page.goto('https://account.mail.ru/signup', {
+                      waitUntil: 'domcontentloaded',
+                      timeout: 30000
+                  });
+                  await page.waitForTimeout(5000);
+                  
+                  const title = await page.title();
+                  console.log(`[*] Mail.ru title: ${title}`);
+                  
+                  const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
+                  console.log(`[*] Mail.ru body: ${bodyText.substring(0, 300)}`);
+                  
+                  await page.screenshot({ path: 'mailru1.png', fullPage: true });
+                  
+                  // Check for CAPTCHA
+                  const captcha = await page.evaluate(() => {
+                      const h = document.body.innerHTML.toLowerCase();
+                      return {
+                          smartcaptcha: h.includes('smartcaptcha'),
+                          recaptcha: h.includes('recaptcha'),
+                          captcha: h.includes('captcha')
+                      };
+                  });
+                  console.log(`[*] Mail.ru CAPTCHA: ${JSON.stringify(captcha)}`);
+                  
+              } catch(e) {
+                  console.log(`[-] Mail.ru failed: ${e.message}`);
+              }
+              
+              console.log('\n=== DONE ===');
+              console.log(`Credentials: ${username} / ${password}`);
               
               await browser.close();
           })().catch(e => {
-              console.error('[-] Error:', e.message);
+              console.error('[-] Fatal:', e.message);
               process.exit(1);
           });
           JSEOF
@@ -204,14 +316,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proton-screenshots
+          name: email-screenshots
           path: '*.png'
-          retention-days: 1
-      
-      - name: Upload HTML
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: proton-html
-          path: '*.html'
           retention-days: 1
