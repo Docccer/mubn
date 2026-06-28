@@ -4,218 +4,191 @@ on:
 
 jobs:
   register:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      
-      - name: Install dependencies
+      - name: Install
         run: |
-          pip install pyautogui pillow pygetwindow
-      
+          pip install playwright
+          playwright install chromium
+          playwright install-deps chromium
+
       - name: Create script
         shell: bash
         run: |
-          cat > register.py << 'PYEOF'
-          import subprocess
-          import time
-          import random
-          import string
-          import pyautogui
-          import os
-          import sys
-          
-          sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-          
-          rand = ''.join(random.choices(string.hexdigits[:16], k=8))
-          email_user = f"hxtest{rand}"
-          email = f"{email_user}@outlook.com"
-          password = "HxTest2026!@#"
-          
-          print(f"[*] Email: {email}", flush=True)
-          print(f"[*] Password: {password}", flush=True)
-          
-          pyautogui.FAILSAFE = True
-          pyautogui.PAUSE = 0.1
-          
-          # Find Chrome
-          chrome_paths = [
-              r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-              r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-          ]
-          
-          chrome_path = None
-          for p in chrome_paths:
-              if os.path.exists(p):
-                  chrome_path = p
-                  break
-          
-          if not chrome_path:
-              import shutil
-              chrome_path = shutil.which("chrome") or shutil.which("chrome.exe")
-          
-          if not chrome_path:
-              print("[-] Chrome not found, trying Edge...", flush=True)
-              chrome_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-              if not os.path.exists(chrome_path):
-                  chrome_path = "msedge.exe"
-          
-          print(f"[*] Using: {chrome_path}", flush=True)
-          
-          # Launch browser normally
-          subprocess.Popen([chrome_path, "--start-maximized", "https://outlook.live.com/owa/0/?nlp=1&signup=1"])
-          print("[*] Launched, waiting 15s...", flush=True)
-          time.sleep(15)
-          
-          # Screenshot
-          try:
-              pyautogui.screenshot().save("s1.png")
-              print("[*] s1.png saved", flush=True)
-          except Exception as e:
-              print(f"[!] Screenshot: {e}", flush=True)
-          
-          sw, sh = pyautogui.size()
-          print(f"[*] Screen: {sw}x{sh}", flush=True)
-          
-          # Activate window
-          try:
-              import pygetwindow as gw
-              wins = gw.getWindowsWithTitle('Outlook') or gw.getWindowsWithTitle('Chrome') or gw.getWindowsWithTitle('Edge')
-              if wins:
-                  wins[0].activate()
-                  time.sleep(1)
-                  print(f"[*] Window: {wins[0].title}", flush=True)
-          except Exception as e:
-              print(f"[!] Window: {e}", flush=True)
-          
-          # Click form area
-          fx, fy = sw // 2, sh // 3
-          pyautogui.click(fx, fy)
-          time.sleep(1)
-          
-          # Tab to email field
-          for _ in range(3):
-              pyautogui.press('tab')
-              time.sleep(0.3)
-          
-          # Type email
-          print("[*] Typing email...", flush=True)
-          pyautogui.hotkey('ctrl', 'a')
-          time.sleep(0.2)
-          for ch in email_user:
-              pyautogui.write(ch, interval=random.uniform(0.04, 0.10))
-          
-          time.sleep(0.5)
-          
-          try:
-              pyautogui.screenshot().save("s2.png")
-              print("[*] s2.png saved", flush=True)
-          except:
-              pass
-          
-          # Submit email
-          print("[*] Submitting...", flush=True)
-          pyautogui.press('enter')
-          time.sleep(8)
-          
-          try:
-              pyautogui.screenshot().save("s3.png")
-              print("[*] s3.png saved", flush=True)
-          except:
-              pass
-          
-          # Fill password
-          print("[*] Password...", flush=True)
-          for ch in password:
-              pyautogui.write(ch, interval=random.uniform(0.04, 0.10))
-          time.sleep(0.5)
-          pyautogui.press('enter')
-          time.sleep(8)
-          
-          try:
-              pyautogui.screenshot().save("s4.png")
-              print("[*] s4.png saved", flush=True)
-          except:
-              pass
-          
-          # Birthday
-          print("[*] Birthday...", flush=True)
-          time.sleep(2)
-          pyautogui.press('tab')
-          time.sleep(0.3)
-          pyautogui.press('down')
-          time.sleep(0.3)
-          pyautogui.press('enter')
-          time.sleep(0.5)
-          pyautogui.press('tab')
-          time.sleep(0.3)
-          pyautogui.write('15', interval=0.1)
-          time.sleep(0.3)
-          pyautogui.press('tab')
-          time.sleep(0.3)
-          pyautogui.write('1995', interval=0.1)
-          time.sleep(0.5)
-          pyautogui.press('enter')
-          time.sleep(8)
-          
-          try:
-              pyautogui.screenshot().save("s5.png")
-              print("[*] s5.png saved", flush=True)
-          except:
-              pass
-          
-          # Name
-          print("[*] Name...", flush=True)
-          pyautogui.write('Test', interval=0.1)
-          pyautogui.press('tab')
-          time.sleep(0.3)
-          pyautogui.write('User', interval=0.1)
-          time.sleep(0.5)
-          pyautogui.press('enter')
-          time.sleep(8)
-          
-          try:
-              pyautogui.screenshot().save("s6.png")
-              print("[*] s6.png saved", flush=True)
-          except:
-              pass
-          
-          # CAPTCHA - press and hold
-          print("[*] CAPTCHA...", flush=True)
-          try:
-              pyautogui.screenshot().save("s_captcha.png")
-          except:
-              pass
-          
-          # Find CAPTCHA button area (typically center-bottom of form)
-          cx, cy = fx, fy + 150
-          print(f"[*] Hold at ({cx},{cy})...", flush=True)
-          pyautogui.mouseDown(cx, cy)
-          time.sleep(8.5)
-          pyautogui.mouseUp(cx, cy)
-          time.sleep(5)
-          
-          try:
-              pyautogui.screenshot().save("s_final.png")
-              print("[*] s_final.png saved", flush=True)
-          except:
-              pass
-          
-          print("\n=== CREDENTIALS ===", flush=True)
-          print(f"Email: {email}", flush=True)
-          print(f"Password: {password}", flush=True)
-          print("=== DONE ===", flush=True)
-          PYEOF
-      
-      - name: Run registration
+          cat > /tmp/reg.py << 'ENDSCRIPT'
+import sys
+import time
+import random
+import string
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+from playwright.sync_api import sync_playwright
+
+suffix = "".join(random.choices(string.hexdigits[:16], k=8))
+username = "hxtest" + suffix
+password = "HxTest2026!@#"
+print("[*] Username: " + username, flush=True)
+print("[*] Password: " + password, flush=True)
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto("https://account.proton.me/signup?plan=free", timeout=60000)
+    page.wait_for_load_state("networkidle", timeout=60000)
+    time.sleep(5)
+
+    # Close popups
+    for sel in ['button:has-text("Close")', 'button:has-text("No thanks")', 'button:has-text("Skip")']:
+        try:
+            btn = page.locator(sel)
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                time.sleep(1)
+        except:
+            pass
+
+    page.screenshot(path="step1.png")
+    print("[*] step1 saved", flush=True)
+
+    # Get input info
+    info = page.evaluate("""() => {
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        const results = [];
+        for (let i = 0; i < inputs.length; i++) {
+            const el = inputs[i];
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            results.push({
+                index: i, id: el.id, type: el.type,
+                visibility: style.visibility,
+                x: Math.round(rect.x), y: Math.round(rect.y),
+                w: Math.round(rect.width), h: Math.round(rect.height)
+            });
+        }
+        return results;
+    }""")
+    print("[*] Inputs: " + str(info), flush=True)
+
+    # React native setter approach
+    fill_js = """
+    (args) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+        ).set;
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        
+        let uname = null, pwd = null, confirm = null;
+        for (const inp of inputs) {
+            if (inp.id === 'username' || (!uname && inp.type !== 'password')) uname = inp;
+            if (inp.id === 'password' || inp.type === 'password') pwd = inp;
+        }
+        if (!uname && inputs.length > 0) uname = inputs[0];
+        if (!pwd && inputs.length > 1) pwd = inputs[1];
+        
+        let ur = 'skip', pr = 'skip', cr = 'skip';
+        
+        if (uname) {
+            uname.focus();
+            nativeSetter.call(uname, args.u);
+            uname.dispatchEvent(new Event('input', {bubbles: true}));
+            uname.dispatchEvent(new Event('change', {bubbles: true}));
+            ur = uname.value;
+        }
+        if (pwd) {
+            pwd.focus();
+            nativeSetter.call(pwd, args.p);
+            pwd.dispatchEvent(new Event('input', {bubbles: true}));
+            pwd.dispatchEvent(new Event('change', {bubbles: true}));
+            pr = pwd.value;
+        }
+        const cel = document.getElementById('password-confirm');
+        if (cel) {
+            cel.focus();
+            nativeSetter.call(cel, args.p);
+            cel.dispatchEvent(new Event('input', {bubbles: true}));
+            cel.dispatchEvent(new Event('change', {bubbles: true}));
+            cr = cel.value;
+        }
+        return {u: ur, p: pr, c: cr};
+    }
+    """
+    result = page.evaluate(fill_js, {"u": username, "p": password})
+    print("[*] Fill result: " + str(result), flush=True)
+    page.screenshot(path="step2.png")
+
+    time.sleep(2)
+    vals = page.evaluate("""() => {
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        return Array.from(inputs).map(e => ({id: e.id, val: e.value.substring(0, 20)}));
+    }""")
+    print("[*] Values check: " + str(vals), flush=True)
+
+    # Also try locator.fill as backup
+    if not result.get("u") or result["u"] == "skip" or result["u"] == "":
+        print("[*] React setter failed for username, trying locator.fill...", flush=True)
+        try:
+            loc = page.locator('[data-testid="input-input-element"]').first
+            loc.click(force=True, timeout=5000)
+            loc.fill(username, timeout=5000)
+            print("[*] locator.fill username done", flush=True)
+        except Exception as e:
+            print("[!] locator.fill failed: " + str(e), flush=True)
+            # Last resort: keyboard type
+            try:
+                loc = page.locator('#username')
+                loc.click(force=True, timeout=5000)
+                page.keyboard.type(username, delay=50)
+                print("[*] keyboard.type username done", flush=True)
+            except Exception as e2:
+                print("[!] keyboard.type failed: " + str(e2), flush=True)
+
+    if not result.get("p") or result["p"] == "skip" or result["p"] == "":
+        print("[*] React setter failed for password, trying locator.fill...", flush=True)
+        try:
+            loc = page.locator('#password')
+            loc.click(force=True, timeout=5000)
+            loc.fill(password, timeout=5000)
+            print("[*] locator.fill password done", flush=True)
+        except Exception as e:
+            print("[!] locator.fill password failed: " + str(e), flush=True)
+
+    page.screenshot(path="step2b.png")
+
+    # Click submit
+    submit = page.locator('button:has-text("Start using Proton Mail now")')
+    if submit.is_visible(timeout=5000):
+        print("[*] Clicking submit...", flush=True)
+        submit.click()
+        time.sleep(5)
+        page.screenshot(path="step3.png")
+        url = page.url
+        title = page.title()
+        print("[*] After submit URL: " + url, flush=True)
+        print("[*] Title: " + title, flush=True)
+        if "signup" not in url:
+            print("[!] SUCCESS - past signup page!", flush=True)
+        else:
+            print("[!] Still on signup page", flush=True)
+            # Check errors
+            errs = page.evaluate("""() => {
+                const els = document.querySelectorAll('[class*="error"], [role="alert"], [class*="notification"]');
+                return Array.from(els).map(e => e.textContent.trim()).filter(t => t.length > 0 && t.length < 200);
+            }""")
+            print("[!] Page text sample: " + page.evaluate("() => document.body.innerText.substring(0, 500)"), flush=True)
+            if errs:
+                print("[!] Errors: " + str(errs), flush=True)
+    else:
+        print("[!] Submit button not found", flush=True)
+
+    page.screenshot(path="final.png")
+    browser.close()
+
+print("", flush=True)
+print("=== CREDENTIALS ===", flush=True)
+print("Email: " + username + "@proton.me", flush=True)
+print("Password: " + password, flush=True)
+print("=== END ===", flush=True)
+ENDSCRIPT
+
+      - name: Run script
         shell: cmd
-        run: python register.py
-      
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: outlook-desktop-screenshots
-          path: '*.png'
-          retention-days: 3
+        run: python /tmp/reg.py
