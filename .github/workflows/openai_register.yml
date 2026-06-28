@@ -1,4 +1,4 @@
-name: OpenAI Register v6
+name: OpenAI Register v7 - API
 on:
   workflow_dispatch:
 
@@ -7,169 +7,55 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Playwright
-        working-directory: D:\a\mubn\mubn
-        run: |
-          npm init -y
-          npm install playwright@1.52.0
-          npx playwright install chromium
-
-      - name: Register OpenAI
-        working-directory: D:\a\mubn\mubn
+      - name: Register via API
         shell: pwsh
         run: |
-          $code = @'
-          const { chromium } = require('playwright');
+          # First, get the auth0 signup page config
+          Write-Host "=== Getting auth0 signup config ==="
           
-          (async () => {
-            const browser = await chromium.launch({ 
-              headless: false, 
-              args: ['--no-sandbox','--disable-blink-features=AutomationControlled','--disable-dev-shm-usage'] 
-            });
-            const ctx = await browser.newContext({ 
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
-              viewport: { width: 1920, height: 1080 },
-              locale: 'en-US'
-            });
-            
-            await ctx.addInitScript(() => {
-              Object.defineProperty(navigator, 'webdriver', { get: () => false });
-              delete navigator.__proto__.webdriver;
-              window.chrome = { runtime: {}, csi: () => {}, loadTimes: () => {} };
-            });
-            
-            const page = await ctx.newPage();
-            
-            // Intercept auth0 requests
-            page.on('request', req => {
-              const url = req.url();
-              if(url.includes('auth.openai.com') || url.includes('auth0')) {
-                console.log('[AUTH_REQ]', req.method(), url.substring(0, 200));
-              }
-            });
-            
-            page.on('response', async res => {
-              const url = res.url();
-              if(url.includes('auth.openai.com') || url.includes('auth0')) {
-                console.log('[AUTH_RES]', res.status(), url.substring(0, 200));
-              }
-            });
-            
-            // Try to get auth0 config by navigating to chatgpt.com
-            console.log('=== Step 1: Get auth0 config ===');
-            try {
-              await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-            } catch(e) {
-              console.log('Nav error:', e.message.substring(0, 100));
-            }
-            await page.waitForTimeout(5000);
-            console.log('URL:', page.url());
-            
-            // Try to extract auth0 URL from page scripts
-            const authUrls = await page.evaluate(() => {
-              const scripts = document.querySelectorAll('script');
-              const urls = [];
-              scripts.forEach(s => {
-                const text = s.textContent || '';
-                const matches = text.match(/auth\.openai\.com[^"'\s]*/g);
-                if(matches) urls.push(...matches);
-                const matches2 = text.match(/client_id=[^&"'\s]*/g);
-                if(matches2) urls.push(...matches2);
-              });
-              return urls;
-            });
-            console.log('Auth URLs found:', JSON.stringify(authUrls));
-            
-            // Try to navigate to auth0 authorize directly
-            console.log('=== Step 2: Try auth0 authorize ===');
-            const clientId = 'DRivsnmYL9gT0WmOedepaqCk6jUk';
-            const redirectUri = 'https://chatgpt.com/api/auth/callback/openai';
-            const authUrl = `https://auth.openai.com/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=openid+profile+email+offline_access&audience=https://api.openai.com/v1&prompt=login`;
-            
-            console.log('Navigating to:', authUrl.substring(0, 100));
-            try {
-              await page.goto(authUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            } catch(e) {
-              console.log('Auth nav error:', e.message.substring(0, 100));
-            }
-            await page.waitForTimeout(5000);
-            await page.screenshot({ path: 'C:/openai_step1.png', fullPage: false });
-            console.log('Auth URL:', page.url());
-            console.log('Auth Title:', await page.title());
-            
-            // Look for Sign up link
-            console.log('=== Looking for Sign up ===');
-            const signupLink = await page.$('a:has-text("Sign up"), a[href*="signup"]');
-            if(signupLink) {
-              console.log('Found Sign up, clicking...');
-              await signupLink.click();
-              await page.waitForTimeout(5000);
-              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
-              console.log('After signup URL:', page.url());
-            }
-            
-            // Look for email input
-            console.log('=== Looking for email input ===');
-            const emailInput = await page.$('input[name="email"], input[name="username"], input[type="email"], input#email, input[name="identifier"]');
-            if(emailInput) {
-              console.log('Found email input!');
-              await emailInput.fill('hxtest5adafcfa@hotmail.com');
-              await page.waitForTimeout(1000);
-              await page.screenshot({ path: 'C:/openai_step3.png', fullPage: false });
-              
-              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue")');
-              if(continueBtn) {
-                console.log('Clicking Continue...');
-                await continueBtn.click();
-                await page.waitForTimeout(8000);
-                await page.screenshot({ path: 'C:/openai_step4.png', fullPage: false });
-                console.log('After continue URL:', page.url());
-                console.log('After continue Title:', await page.title());
-              }
-            } else {
-              console.log('No email input found');
-              const inputs = await page.$$eval('input', els => els.map(e => ({ name: e.name, type: e.type, id: e.id, placeholder: e.placeholder })));
-              console.log('Inputs:', JSON.stringify(inputs));
-              const bodyText = await page.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2 && t.trim().length < 100).map(t => t.trim()).slice(0, 20));
-              console.log('Page text:', JSON.stringify(bodyText));
-            }
-            
-            // Password page
-            const pwdInput = await page.$('input[name="password"], input[type="password"]');
-            if(pwdInput) {
-              console.log('=== Password page ===');
-              await pwdInput.fill('HxTest2026!@#');
-              await page.waitForTimeout(1000);
-              const submitBtn = await page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Sign up"), button:has-text("Create")');
-              if(submitBtn) {
-                await submitBtn.click();
-                await page.waitForTimeout(8000);
-                await page.screenshot({ path: 'C:/openai_step5.png', fullPage: false });
-                console.log('After password URL:', page.url());
-              }
-            }
-            
-            // Final state
-            console.log('=== Final State ===');
-            console.log('URL:', page.url());
-            console.log('Title:', await page.title());
-            await page.screenshot({ path: 'C:/openai_final.png', fullPage: false });
-            
-            await browser.close();
-            console.log('=== DONE ===');
-          })().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
-          '@
-          Set-Content -Path "D:\a\mubn\mubn\register_openai.js" -Value $code
-          node register_openai.js
-
-      - name: Upload Screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openai-screenshots
-          path: C:/openai_*.png
+          # Try to get the signup page directly
+          $response = Invoke-WebRequest -Uri "https://auth.openai.com/u/signup/identifier" -Method GET -Headers @{
+            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+          } -MaximumRedirection 5 -ErrorAction SilentlyContinue
+          
+          Write-Host "Status: $($response.StatusCode)"
+          Write-Host "URL: $($response.BaseResponse.ResponseUri)"
+          Write-Host "Title: $($response.Content.Substring(0, [Math]::Min(200, $response.Content.Length)))"
+          
+          # Extract state parameter from the page
+          $stateMatch = [regex]::Match($response.Content, 'state=([^&"''\s]+)')
+          if($stateMatch.Success) {
+            Write-Host "State: $($stateMatch.Groups[1].Value)"
+          }
+          
+          # Extract client_id
+          $clientMatch = [regex]::Match($response.Content, 'client_id=([^&"''\s]+)')
+          if($clientMatch.Success) {
+            Write-Host "Client ID: $($clientMatch.Groups[1].Value)"
+          }
+          
+          # Look for form fields
+          $inputMatches = [regex]::Matches($response.Content, '<input[^>]*name="([^"]*)"[^>]*type="([^"]*)"[^>]*>')
+          foreach($m in $inputMatches) {
+            Write-Host "Input: name=$($m.Groups[1].Value) type=$($m.Groups[2].Value)"
+          }
+          
+          # Look for signup form action
+          $formMatch = [regex]::Match($response.Content, '<form[^>]*action="([^"]*)"[^>]*>')
+          if($formMatch.Success) {
+            Write-Host "Form action: $($formMatch.Groups[1].Value)"
+          }
+          
+          # Try to find state in different format
+          $stateMatch2 = [regex]::Match($response.Content, '"state":"([^"]*)"')
+          if($stateMatch2.Success) {
+            Write-Host "State (JSON): $($stateMatch2.Groups[1].Value)"
+          }
+          
+          # Try to find any hidden inputs
+          $hiddenMatches = [regex]::Matches($response.Content, '<input[^>]*type="hidden"[^>]*name="([^"]*)"[^>]*value="([^"]*)"')
+          foreach($m in $hiddenMatches) {
+            Write-Host "Hidden: name=$($m.Groups[1].Value) value=$($m.Groups[2].Value.Substring(0, [Math]::Min(50, $m.Groups[2].Value.Length)))"
+          }
+          
+          Write-Host "=== Done ==="
