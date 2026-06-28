@@ -1,0 +1,181 @@
+name: proton-fix2
+on:
+  workflow_dispatch:
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -yqq libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 libxrandr2 libgbm1 libasound2 libxshmfence1 libgtk-3-0
+        pip install playwright
+        playwright install chromium
+        playwright install-deps chromium
+
+    - name: Create script
+      shell: bash
+      run: |
+        cat > /tmp/register.py << 'SCRIPTEOF'
+import sys, time, random, string
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+from playwright.sync_api import sync_playwright
+
+suffix = ''.join(random.choices(string.hexdigits[:16], k=8))
+username = "hxtest" + suffix
+password = "HxTest2026!@#"
+print("[*] Username: " + username, flush=True)
+print("[*] Password: " + password, flush=True)
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    page = browser.new_page(viewport={'width': 1280, 'height': 900})
+    page.goto('https://account.proton.me/signup?plan=free', timeout=60000)
+    page.wait_for_load_state('networkidle', timeout=60000)
+    time.sleep(5)
+
+    # Close popups
+    for sel in ['button:has-text("Close")', 'button:has-text("No thanks")', 'button:has-text("Skip")']:
+        try:
+            btn = page.locator(sel)
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                print("[*] Closed popup: " + sel, flush=True)
+                time.sleep(1)
+        except:
+            pass
+
+    page.screenshot(path="step1.png")
+
+    # Use React native setter pattern
+    fill_result = page.evaluate("""(args) => {
+        const uname = args.username;
+        const pwd = args.password;
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        const results = [];
+        
+        for (let i = 0; i < inputs.length; i++) {
+            const el = inputs[i];
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            results.push({
+                index: i,
+                id: el.id,
+                type: el.type,
+                visibility: style.visibility,
+                x: rect.x, y: rect.y, w: rect.width, h: rect.height
+            });
+        }
+        
+        // Find username input (first text-like input)
+        let usernameInput = null;
+        let passwordInput = null;
+        for (const inp of inputs) {
+            if (inp.id === 'username' || inp.type === 'text' || (!inp.type || inp.type === '')) {
+                if (!usernameInput) usernameInput = inp;
+            }
+            if (inp.id === 'password' || inp.type === 'password') {
+                passwordInput = inp;
+            }
+        }
+        
+        if (!usernameInput && inputs.length > 0) usernameInput = inputs[0];
+        if (!passwordInput && inputs.length > 1) passwordInput = inputs[1];
+        
+        let uResult = 'not found';
+        let pResult = 'not found';
+        let cResult = 'not found';
+        
+        if (usernameInput) {
+            usernameInput.focus();
+            nativeSetter.call(usernameInput, uname);
+            usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+            uResult = usernameInput.value;
+        }
+        
+        if (passwordInput) {
+            passwordInput.focus();
+            nativeSetter.call(passwordInput, pwd);
+            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+            pResult = passwordInput.value;
+        }
+        
+        // Password confirm
+        const confirmEl = document.getElementById('password-confirm');
+        if (confirmEl) {
+            confirmEl.focus();
+            nativeSetter.call(confirmEl, pwd);
+            confirmEl.dispatchEvent(new Event('input', { bubbles: true }));
+            confirmEl.dispatchEvent(new Event('change', { bubbles: true }));
+            cResult = confirmEl.value;
+        }
+        
+        return {
+            inputs: results,
+            username_value: uResult,
+            password_value: pResult,
+            confirm_value: cResult
+        };
+    }""", {"username": username, "password": password})
+
+    print("[*] Fill result: " + str(fill_result), flush=True)
+    page.screenshot(path="step2.png")
+
+    # Wait and check if React accepted values
+    time.sleep(2)
+    check = page.evaluate("""() => {
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        const vals = [];
+        for (const inp of inputs) {
+            vals.push({id: inp.id, type: inp.type, value: inp.value});
+        }
+        return vals;
+    }""")
+    print("[*] Values after fill: " + str(check), flush=True)
+
+    # Try to click submit
+    submit_btn = page.locator('button:has-text("Start using Proton Mail now")')
+    if submit_btn.is_visible(timeout=3000):
+        print("[*] Clicking submit...", flush=True)
+        submit_btn.click()
+        time.sleep(5)
+        page.screenshot(path="step3.png")
+        
+        url = page.url
+        title = page.title()
+        print("[*] After submit URL: " + url, flush=True)
+        print("[*] Title: " + title, flush=True)
+        
+        if 'signup' not in url:
+            print("[!] SUCCESS - past signup!", flush=True)
+        else:
+            print("[!] Still on signup", flush=True)
+            # Check for errors
+            errors = page.evaluate("""() => {
+                const els = document.querySelectorAll('[class*="error"], [class*="alert"], [role="alert"]');
+                return Array.from(els).map(e => e.textContent.trim()).filter(t => t.length > 0);
+            }""")
+            if errors:
+                print("[!] Errors: " + str(errors), flush=True)
+
+    page.screenshot(path="final.png")
+    html = page.content()
+    with open('page.html', 'w') as f:
+        f.write(html)
+    print("[*] HTML saved: " + str(len(html)) + " bytes", flush=True)
+    browser.close()
+
+print("", flush=True)
+print("=== CREDENTIALS ===", flush=True)
+print("Email: " + username + "@proton.me", flush=True)
+print("Password: " + password, flush=True)
+print("=== END ===", flush=True)
+SCRIPTEOF
+
+    - name: Run script
+      shell: cmd
+      run: python /tmp/register.py
