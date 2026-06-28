@@ -13,12 +13,14 @@ jobs:
           node-version: '20'
 
       - name: Install Playwright
+        working-directory: D:\a\mubn\mubn
         run: |
           npm init -y
           npm install playwright@1.52.0
           npx playwright install chromium
 
       - name: Register OpenAI
+        working-directory: D:\a\mubn\mubn
         shell: pwsh
         run: |
           $code = @'
@@ -85,8 +87,6 @@ jobs:
               console.log('Found email input!');
               await emailInput.fill('hxtest5adafcfa@hotmail.com');
               await page.waitForTimeout(1000);
-              
-              // Look for Continue
               const continueBtn = await page.$('button[type="submit"], button:has-text("Continue")');
               if(continueBtn) {
                 console.log('Clicking Continue...');
