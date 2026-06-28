@@ -6,221 +6,127 @@ jobs:
   register:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      
       - name: Install Playwright
         run: |
-          npm init -y
-          npm install playwright
-          npx playwright install chromium --with-deps
-      
-      - name: Register ProtonMail
+          pip install playwright
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Create script
+        shell: bash
         run: |
-          cat > register.js << 'JSEOF'
-          const { chromium } = require('playwright');
-          const crypto = require('crypto');
-          
-          const rand = crypto.randomBytes(4).toString('hex');
-          const username = `hxtest${rand}`;
-          const password = 'HxTest2026!@#';
-          
-          console.log('[*] Username: ' + username + '@proton.me');
-          console.log('[*] Password: ' + password);
-          
-          (async () => {
-              const browser = await chromium.launch({
-                  headless: true,
-                  args: ['--no-sandbox', '--disable-blink-features=AutomationControlled']
-              });
-              
-              const context = await browser.newContext({
-                  locale: 'en-US',
-                  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-              });
-              
-              const page = await context.newPage();
-              
-              await page.addInitScript(() => {
-                  Object.defineProperty(navigator, 'webdriver', { get: () => false });
-              });
-              
-              console.log('[*] Navigating...');
-              await page.goto('https://account.proton.me/signup?plan=free', { 
-                  waitUntil: 'domcontentloaded', 
-                  timeout: 30000 
-              });
-              await page.waitForTimeout(12000);
-              
-              console.log('[*] Title: ' + await page.title());
-              await page.screenshot({ path: 'step1.png', fullPage: true });
-              
-              // Check inputs
-              const inputs = await page.evaluate(() => {
-                  return Array.from(document.querySelectorAll('input')).map(i => ({
-                      id: i.id, type: i.type, visible: i.offsetParent !== null
-                  }));
-              });
-              console.log('[*] Inputs: ' + JSON.stringify(inputs));
-              
-              // Approach: click on the input element, then pressSequentially
-              const userLoc = page.locator('#username');
-              const pwdLoc = page.locator('#password');
-              
-              // Click username field and type
-              console.log('[*] Clicking username field...');
-              await userLoc.click({ timeout: 10000 });
-              await page.waitForTimeout(300);
-              
-              // Clear and type character by character
-              await page.keyboard.press('Control+a');
-              await page.keyboard.press('Backspace');
-              await page.waitForTimeout(200);
-              
-              console.log('[*] Typing username...');
-              await page.keyboard.type(username, { delay: 100 });
-              await page.waitForTimeout(500);
-              
-              // Check value immediately
-              let userVal = await userLoc.inputValue();
-              console.log('[*] Username after type: "' + userVal + '"');
-              
-              // If empty, try pressSequentially on the locator
-              if (!userVal) {
-                  console.log('[*] Empty! Trying pressSequentially on locator...');
-                  await userLoc.click();
-                  await page.waitForTimeout(200);
-                  await userLoc.pressSequentially(username, { delay: 100 });
-                  await page.waitForTimeout(500);
-                  userVal = await userLoc.inputValue();
-                  console.log('[*] Username after pressSequentially: "' + userVal + '"');
-              }
-              
-              // If still empty, try fill with dispatchEvent
-              if (!userVal) {
-                  console.log('[*] Still empty! Trying fill + dispatchEvent...');
-                  await userLoc.fill(username);
-                  // Immediately dispatch React-compatible events
-                  await page.evaluate(() => {
-                      const el = document.getElementById('username');
-                      if (el) {
-                          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                              window.HTMLInputElement.prototype, 'value'
-                          ).set;
-                          nativeInputValueSetter.call(el, el.value);
-                          el.dispatchEvent(new Event('input', { bubbles: true }));
-                          el.dispatchEvent(new Event('change', { bubbles: true }));
-                      }
-                  });
-                  await page.waitForTimeout(500);
-                  userVal = await userLoc.inputValue();
-                  console.log('[*] Username after native setter: "' + userVal + '"');
-              }
-              
-              // If STILL empty, try triple-click to select all + type
-              if (!userVal) {
-                  console.log('[*] STILL empty! Trying triple-click + type...');
-                  await userLoc.click({ clickCount: 3 });
-                  await page.waitForTimeout(200);
-                  await page.keyboard.type(username, { delay: 80 });
-                  await page.waitForTimeout(500);
-                  userVal = await userLoc.inputValue();
-                  console.log('[*] Username after triple-click: "' + userVal + '"');
-              }
-              
-              // Fill password
-              await pwdLoc.click({ timeout: 10000 });
-              await page.keyboard.type(password, { delay: 80 });
-              console.log('[*] Password typed');
-              
-              // Check for repeat password
-              const pwdCount = await page.locator('input[type="password"]').count();
-              if (pwdCount >= 2) {
-                  console.log('[*] Filling repeat password...');
-                  await page.locator('input[type="password"]').nth(1).click();
-                  await page.keyboard.type(password, { delay: 80 });
-              }
-              
-              // Final form state
-              const formState = await page.evaluate(() => ({
-                  user: document.getElementById('username')?.value || '',
-                  pwd: document.getElementById('password')?.value?.length || 0
-              }));
-              console.log('[*] Final form state: user="' + formState.user + '", pwd_len=' + formState.pwd);
-              
-              await page.screenshot({ path: 'step2.png', fullPage: true });
-              
-              // Click submit
-              const clicked = await page.evaluate(() => {
-                  const btns = Array.from(document.querySelectorAll('button'));
-                  for (const btn of btns) {
-                      const text = btn.innerText.trim().toLowerCase();
-                      if (text.includes('start using') || text.includes('create') || text.includes('sign up')) {
-                          btn.click(); return btn.innerText.trim();
-                      }
-                  }
-                  return null;
-              });
-              console.log('[*] Clicked: ' + clicked);
-              
-              await page.waitForTimeout(10000);
-              
-              console.log('[*] After submit - Title: ' + await page.title());
-              console.log('[*] After submit - URL: ' + page.url());
-              const body = await page.evaluate(() => document.body.innerText.substring(0, 800));
-              console.log('[*] Body: ' + body);
-              
-              await page.screenshot({ path: 'step3.png', fullPage: true });
-              
-              // Check verification
-              const verify = await page.evaluate(() => {
-                  const t = document.body.innerText;
-                  const h = document.body.innerHTML.toLowerCase();
-                  return {
-                      phone: t.includes('phone') || t.includes('Phone'),
-                      captcha: h.includes('captcha') || h.includes('recaptcha'),
-                      recovery: t.includes('recovery'),
-                      success: t.includes('Inbox') || t.includes('Welcome')
-                  };
-              });
-              console.log('[*] Verification: ' + JSON.stringify(verify));
-              
-              // Skip steps
-              for (let s = 0; s < 5; s++) {
-                  const skipped = await page.evaluate(() => {
-                      const btns = Array.from(document.querySelectorAll('button, a'));
-                      for (const btn of btns) {
-                          const text = btn.innerText.trim().toLowerCase();
-                          if (text === 'skip' || text === 'skip for now' || text === 'maybe later') {
-                              btn.click(); return btn.innerText.trim();
-                          }
-                      }
-                      return null;
-                  });
-                  if (skipped) { console.log('[*] Skipped: ' + skipped); await page.waitForTimeout(5000); }
-                  else break;
-              }
-              
-              // Final
-              console.log('\n=== FINAL ===');
-              console.log('Title: ' + await page.title());
-              console.log('URL: ' + page.url());
-              console.log('Body: ' + await page.evaluate(() => document.body.innerText.substring(0, 500)));
-              console.log('\n=== CREDENTIALS ===');
-              console.log('Email: ' + username + '@proton.me');
-              console.log('Password: ' + password);
-              
-              await page.screenshot({ path: 'final.png', fullPage: true });
-              await browser.close();
-          })().catch(e => { console.error('[-] Fatal: ' + e.message); process.exit(1); });
-          JSEOF
-          node register.js
-      
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: proton-v9
-          path: '*.png'
-          retention-days: 1
+          cat > /tmp/reg.py << 'EOF'
+import sys, time, random, string
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+from playwright.sync_api import sync_playwright
+
+suffix = ''.join(random.choices(string.hexdigits[:16], k=8))
+username = "hxtest" + suffix
+password = "HxTest2026!@#"
+print("[*] Username: " + username, flush=True)
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    page = browser.new_page(viewport={'width': 1280, 'height': 900})
+    page.goto('https://account.proton.me/signup?plan=free', timeout=60000)
+    page.wait_for_load_state('networkidle', timeout=60000)
+    time.sleep(5)
+
+    for sel in ['button:has-text("Close")', 'button:has-text("No thanks")', 'button:has-text("Skip")']:
+        try:
+            btn = page.locator(sel)
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                time.sleep(1)
+        except:
+            pass
+
+    page.screenshot(path="step1.png")
+
+    fill_result = page.evaluate("""(args) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        const info = [];
+        
+        for (let i = 0; i < inputs.length; i++) {
+            const el = inputs[i];
+            const rect = el.getBoundingClientRect();
+            info.push({index: i, id: el.id, type: el.type, x: rect.x, y: rect.y, w: rect.width, h: rect.height});
+        }
+        
+        let usernameInput = null;
+        let passwordInput = null;
+        for (const inp of inputs) {
+            if (inp.id === 'username') { usernameInput = inp; }
+            if (inp.id === 'password' || inp.type === 'password') { passwordInput = inp; }
+        }
+        if (!usernameInput && inputs.length > 0) usernameInput = inputs[0];
+        if (!passwordInput && inputs.length > 1) passwordInput = inputs[1];
+        
+        let uVal = 'not found';
+        let pVal = 'not found';
+        
+        if (usernameInput) {
+            usernameInput.focus();
+            nativeSetter.call(usernameInput, args.username);
+            usernameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+            uVal = usernameInput.value;
+        }
+        
+        if (passwordInput) {
+            passwordInput.focus();
+            nativeSetter.call(passwordInput, args.password);
+            passwordInput.dispatchEvent(new Event('input', { bubbles: true }));
+            passwordInput.dispatchEvent(new Event('change', { bubbles: true }));
+            pVal = passwordInput.value;
+        }
+        
+        const confirmEl = document.getElementById('password-confirm') || (inputs.length > 2 ? inputs[2] : null);
+        let cVal = 'not found';
+        if (confirmEl) {
+            confirmEl.focus();
+            nativeSetter.call(confirmEl, args.password);
+            confirmEl.dispatchEvent(new Event('input', { bubbles: true }));
+            confirmEl.dispatchEvent(new Event('change', { bubbles: true }));
+            cVal = confirmEl.value;
+        }
+        
+        return {inputs: info, username: uVal, password: pVal, confirm: cVal};
+    }""", {"username": username, "password": password})
+
+    print("[*] Fill: " + str(fill_result), flush=True)
+    page.screenshot(path="step2.png")
+
+    time.sleep(2)
+    check = page.evaluate("""() => {
+        const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
+        return Array.from(inputs).map(e => ({id: e.id, type: e.type, value: e.value}));
+    }""")
+    print("[*] Check: " + str(check), flush=True)
+
+    submit = page.locator('button:has-text("Start using Proton Mail now")')
+    if submit.is_visible(timeout=3000):
+        submit.click()
+        time.sleep(5)
+        page.screenshot(path="step3.png")
+        print("[*] URL: " + page.url, flush=True)
+        if 'signup' not in page.url:
+            print("[!] SUCCESS", flush=True)
+        else:
+            errs = page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('[class*="error"], [role="alert"]'))
+                    .map(e => e.textContent.trim()).filter(t => t.length > 0);
+            }""")
+            print("[!] Errors: " + str(errs), flush=True)
+
+    page.screenshot(path="final.png")
+    browser.close()
+
+print("Email: " + username + "@proton.me", flush=True)
+print("Password: " + password, flush=True)
+EOF
+
+      - name: Run
+        shell: cmd
+        run: python /tmp/reg.py
