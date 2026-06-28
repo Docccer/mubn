@@ -152,8 +152,8 @@ jobs:
             console.log('=== DONE ===');
           })().catch(e => { console.error('FATAL:', e.message); process.exit(1); });
           '@
-          Set-Content -Path "C:\register_openai.js" -Value $code
-          node C:\register_openai.js
+          Set-Content -Path "D:\a\mubn\mubn\register_openai.js" -Value $code
+          node register_openai.js
 
       - name: Upload Screenshots
         if: always()
