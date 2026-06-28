@@ -1,4 +1,4 @@
-name: proton-v5
+name: proton-v6
 on:
   workflow_dispatch:
 
@@ -46,7 +46,6 @@ jobs:
                   Object.defineProperty(navigator, 'webdriver', { get: () => false });
               });
               
-              // Navigate to signup
               console.log('[*] Navigating...');
               await page.goto('https://account.proton.me/signup?plan=free', { 
                   waitUntil: 'domcontentloaded', 
@@ -59,153 +58,136 @@ jobs:
               
               await page.screenshot({ path: 'step1.png', fullPage: true });
               
-              // Dump all inputs
+              // Dump inputs
               const inputs = await page.evaluate(() => {
                   return Array.from(document.querySelectorAll('input')).map((i, idx) => ({
-                      idx,
-                      id: i.id,
-                      name: i.name,
-                      type: i.type,
+                      idx, id: i.id, name: i.name, type: i.type,
                       placeholder: i.placeholder,
                       testid: i.getAttribute('data-testid'),
                       ariaLabel: i.getAttribute('aria-label'),
-                      disabled: i.disabled,
-                      readOnly: i.readOnly,
-                      hidden: i.hidden,
-                      offsetParent: i.offsetParent !== null,
-                      rect: JSON.parse(JSON.stringify(i.getBoundingClientRect()))
+                      visible: i.offsetParent !== null
                   }));
               });
               console.log(`[*] Inputs: ${JSON.stringify(inputs, null, 2)}`);
               
-              // Use evaluate() to fill inputs directly (bypass click/fill interaction)
-              // Find inputs by data-testid="input-input-element"
-              const filled = await page.evaluate((user, pwd) => {
+              // Fill using evaluate with single arg object
+              const filled = await page.evaluate(({user, pwd}) => {
                   const els = document.querySelectorAll('[data-testid="input-input-element"]');
                   const results = [];
                   
                   for (let i = 0; i < els.length; i++) {
                       const el = els[i];
-                      const isPassword = el.type === 'password' || el.getAttribute('aria-label')?.toLowerCase().includes('password');
+                      const isPassword = el.type === 'password';
                       
-                      if (i === 0 && !isPassword) {
-                          // First non-password input = username/email
+                      if (!isPassword && i === 0) {
                           el.focus();
                           el.value = user;
                           el.dispatchEvent(new Event('input', { bubbles: true }));
                           el.dispatchEvent(new Event('change', { bubbles: true }));
                           results.push({ idx: i, filled: 'username', value: el.value });
                       } else if (isPassword) {
-                          // Password input
                           el.focus();
                           el.value = pwd;
                           el.dispatchEvent(new Event('input', { bubbles: true }));
                           el.dispatchEvent(new Event('change', { bubbles: true }));
-                          results.push({ idx: i, filled: 'password', value: '***' });
+                          results.push({ idx: i, filled: 'password' });
                       }
                   }
-                  
                   return results;
-              }, username, password);
+              }, { user: username, pwd: password });
               console.log(`[*] Filled: ${JSON.stringify(filled)}`);
               
               await page.waitForTimeout(1000);
+              
+              // Verify fill worked
+              const vals = await page.evaluate(() => {
+                  const els = document.querySelectorAll('[data-testid="input-input-element"]');
+                  return Array.from(els).map(e => ({ type: e.type, value: e.value.substring(0, 20) }));
+              });
+              console.log(`[*] Values: ${JSON.stringify(vals)}`);
+              
               await page.screenshot({ path: 'step2.png', fullPage: true });
               
-              // Check if form is filled
-              const formState = await page.evaluate(() => {
-                  const inputs = document.querySelectorAll('[data-testid="input-input-element"]');
-                  return Array.from(inputs).map(i => ({
-                      type: i.type,
-                      value: i.value.substring(0, 20),
-                      ariaLabel: i.getAttribute('aria-label')
-                  }));
-              });
-              console.log(`[*] Form state: ${JSON.stringify(formState)}`);
-              
-              // Find and click submit button
-              const submitInfo = await page.evaluate(() => {
-                  const btns = Array.from(document.querySelectorAll('button'));
-                  return btns.map(b => ({
+              // List all buttons
+              const btns = await page.evaluate(() => {
+                  return Array.from(document.querySelectorAll('button')).map(b => ({
                       text: b.innerText.trim().substring(0, 60),
                       testid: b.getAttribute('data-testid'),
-                      type: b.type,
                       disabled: b.disabled
-                  })).filter(b => b.text && !b.text.includes('month') && !b.text.includes('US$'));
+                  }));
               });
-              console.log(`[*] Buttons: ${JSON.stringify(submitInfo, null, 2)}`);
+              console.log(`[*] Buttons: ${JSON.stringify(btns, null, 2)}`);
               
-              // Click the submit/signup button
+              // Click submit button
               const clicked = await page.evaluate(() => {
                   const btns = Array.from(document.querySelectorAll('button'));
-                  // Look for "Start using" or "Create" or "Next" or "Sign up" or "Get started"
+                  const targets = ['start using', 'create account', 'get started', 'sign up', 'next', 'continue', 'register'];
                   for (const btn of btns) {
                       const text = btn.innerText.trim().toLowerCase();
-                      if (text.includes('start using') || text.includes('create') || 
-                          text.includes('get started') || text.includes('sign up') ||
-                          text.includes('next') || text.includes('continue')) {
+                      if (targets.some(t => text.includes(t))) {
                           btn.click();
                           return btn.innerText.trim();
                       }
                   }
                   return null;
               });
-              console.log(`[*] Clicked button: ${clicked}`);
+              console.log(`[*] Clicked: ${clicked}`);
+              
+              if (!clicked) {
+                  console.log('[!] No submit button found. Trying form submit...');
+                  await page.evaluate(() => {
+                      const form = document.querySelector('form');
+                      if (form) form.submit();
+                  });
+              }
               
               await page.waitForTimeout(10000);
               
-              // Check result
               console.log(`[*] After submit - Title: ${await page.title()}`);
               console.log(`[*] After submit - URL: ${page.url()}`);
               
-              const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
+              const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 800));
               console.log(`[*] Body: ${bodyText}`);
               
               await page.screenshot({ path: 'step3.png', fullPage: true });
               
-              // Check verification requirements
+              // Check verification
               const verify = await page.evaluate(() => {
                   const t = document.body.innerText;
                   const h = document.body.innerHTML.toLowerCase();
                   return {
-                      phone: t.includes('phone') || t.includes('Phone') || t.includes('mobile'),
-                      captcha: h.includes('captcha') || h.includes('recaptcha') || h.includes('hcaptcha'),
-                      recovery: t.includes('recovery') || t.includes('Recovery'),
-                      verify: t.includes('verify') || t.includes('Verify'),
-                      success: t.includes('Inbox') || t.includes('Welcome') || t.includes('Congratulations'),
-                      sms: t.includes('SMS') || t.includes('sms')
+                      phone: t.includes('phone') || t.includes('Phone'),
+                      captcha: h.includes('captcha') || h.includes('recaptcha'),
+                      recovery: t.includes('recovery'),
+                      success: t.includes('Inbox') || t.includes('Welcome')
                   };
               });
               console.log(`[*] Verification: ${JSON.stringify(verify)}`);
               
-              // Try to skip any verification steps
-              for (let step = 0; step < 3; step++) {
-                  const skipBtn = await page.evaluate(() => {
+              // Try skipping steps
+              for (let s = 0; s < 5; s++) {
+                  const skipped = await page.evaluate(() => {
                       const btns = Array.from(document.querySelectorAll('button, a'));
                       for (const btn of btns) {
                           const text = btn.innerText.trim().toLowerCase();
-                          if (text === 'skip' || text === 'skip for now' || text === 'maybe later') {
+                          if (text === 'skip' || text === 'skip for now' || text === 'maybe later' || text === 'not now') {
                               btn.click();
                               return btn.innerText.trim();
                           }
                       }
                       return null;
                   });
-                  
-                  if (skipBtn) {
-                      console.log(`[*] Skipped: "${skipBtn}"`);
+                  if (skipped) {
+                      console.log(`[*] Skipped: "${skipped}"`);
                       await page.waitForTimeout(5000);
-                  } else {
-                      break;
-                  }
+                  } else break;
               }
               
-              // Final state
+              // Final
               console.log(`\n=== FINAL ===`);
               console.log(`Title: ${await page.title()}`);
               console.log(`URL: ${page.url()}`);
-              const finalBody = await page.evaluate(() => document.body.innerText.substring(0, 500));
-              console.log(`Body: ${finalBody}`);
+              console.log(`Body: ${await page.evaluate(() => document.body.innerText.substring(0, 500))}`);
               console.log(`\n=== CREDENTIALS ===`);
               console.log(`Email: ${username}@proton.me`);
               console.log(`Password: ${password}`);
@@ -224,6 +206,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proton-v5
+          name: proton-v6
           path: '*.png'
           retention-days: 1
