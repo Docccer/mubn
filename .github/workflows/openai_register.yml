@@ -1,4 +1,4 @@
-name: OpenAI Register v3
+name: OpenAI Register v4
 on:
   workflow_dispatch:
 
@@ -29,12 +29,7 @@ jobs:
           (async () => {
             const browser = await chromium.launch({ 
               headless: false, 
-              args: [
-                '--no-sandbox',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-dev-shm-usage'
-              ] 
+              args: ['--no-sandbox','--disable-blink-features=AutomationControlled','--disable-dev-shm-usage'] 
             });
             const ctx = await browser.newContext({ 
               userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
@@ -42,101 +37,102 @@ jobs:
               locale: 'en-US'
             });
             
-            // Anti-detection
             await ctx.addInitScript(() => {
               Object.defineProperty(navigator, 'webdriver', { get: () => false });
               delete navigator.__proto__.webdriver;
-              Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-              Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
               window.chrome = { runtime: {}, csi: () => {}, loadTimes: () => {} };
-              const originalQuery = window.navigator.permissions.query;
-              window.navigator.permissions.query = (parameters) => (
-                parameters.name === 'notifications' ?
-                  Promise.resolve({ state: Notification.permission }) :
-                  originalQuery(parameters)
-              );
             });
             
             const page = await ctx.newPage();
             
-            // Intercept auth requests
-            page.on('response', async res => {
-              const url = res.url();
-              if(url.includes('auth0') || url.includes('/api/auth') || url.includes('authorize')) {
-                console.log('[AUTH]', res.status(), url.substring(0, 150));
+            // Handle popup
+            ctx.on('page', async newPage => {
+              console.log('[POPUP] New page detected:', newPage.url());
+              await newPage.waitForLoadState('domcontentloaded');
+              console.log('[POPUP] URL:', newPage.url());
+              console.log('[POPUP] Title:', await newPage.title());
+              await newPage.screenshot({ path: 'C:/openai_popup.png', fullPage: false });
+              
+              // Look for email input in popup
+              const emailInput = await newPage.$('input[name="email"], input[name="username"], input[type="email"], input#email, input[name="identifier"]');
+              if(emailInput) {
+                console.log('[POPUP] Found email input!');
+                await emailInput.fill('hxtest5adafcfa@hotmail.com');
+                await newPage.waitForTimeout(1000);
+                const continueBtn = await newPage.$('button[type="submit"], button:has-text("Continue")');
+                if(continueBtn) {
+                  console.log('[POPUP] Clicking Continue...');
+                  await continueBtn.click();
+                  await newPage.waitForTimeout(8000);
+                  console.log('[POPUP] After continue URL:', newPage.url());
+                  await newPage.screenshot({ path: 'C:/openai_popup2.png', fullPage: false });
+                }
+              } else {
+                console.log('[POPUP] No email input found');
+                const inputs = await newPage.$$eval('input', els => els.map(e => ({ name: e.name, type: e.type, id: e.id })));
+                console.log('[POPUP] Inputs:', JSON.stringify(inputs));
+                const bodyText = await newPage.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2 && t.trim().length < 100).map(t => t.trim()).slice(0, 20));
+                console.log('[POPUP] Page text:', JSON.stringify(bodyText));
               }
             });
             
-            console.log('=== Step 1: Navigate to ChatGPT ===');
+            console.log('=== Step 1: Navigate to platform.openai.com ===');
             try {
-              await page.goto('https://chatgpt.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await page.goto('https://platform.openai.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
             } catch(e) {
               console.log('Nav error:', e.message.substring(0, 100));
             }
-            await page.waitForTimeout(8000);
+            await page.waitForTimeout(5000);
             await page.screenshot({ path: 'C:/openai_step1.png', fullPage: false });
             console.log('URL:', page.url());
             console.log('Title:', await page.title());
             
-            // Check if we're on Cloudflare challenge
-            const title = await page.title();
-            if(title.includes('moment') || title.includes('challenge') || title.includes('Cloudflare')) {
-              console.log('=== Cloudflare challenge - waiting longer ===');
-              await page.waitForTimeout(15000);
-              await page.screenshot({ path: 'C:/openai_cf.png', fullPage: false });
-              console.log('After CF URL:', page.url());
-              console.log('After CF Title:', await page.title());
-            }
-            
-            // Look for Log in button
-            console.log('=== Looking for Log in ===');
-            const loginBtn = await page.$('button:has-text("Log in"), a:has-text("Log in"), a[href*="login"], a[href*="auth"]');
-            if(loginBtn) {
-              console.log('Found Log in, clicking...');
-              await loginBtn.click();
-              await page.waitForTimeout(8000);
-              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
-              console.log('After login URL:', page.url());
-              console.log('After login Title:', await page.title());
-            } else {
-              console.log('No Log in button found');
-              const buttons = await page.$$eval('button, a', els => els.map(e => ({ tag: e.tagName, text: (e.textContent||'').trim().substring(0, 50), href: e.href||'' })).filter(b => b.text.length > 0));
-              console.log('All buttons/links:', JSON.stringify(buttons.slice(0, 20)));
-            }
-            
-            // Now we should be on auth0 page - look for Sign up link
-            console.log('=== Looking for Sign up link ===');
-            const signupLink = await page.$('a:has-text("Sign up"), a[href*="signup"], button:has-text("Sign up")');
-            if(signupLink) {
-              console.log('Found Sign up link, clicking...');
-              await signupLink.click();
+            // Look for Sign up
+            console.log('=== Looking for Sign up ===');
+            const signupBtn = await page.$('a:has-text("Sign up"), a:has-text("Get started"), button:has-text("Sign up"), a[href*="signup"]');
+            if(signupBtn) {
+              console.log('Found Sign up, clicking...');
+              try {
+                await Promise.all([
+                  page.waitForEvent('popup', { timeout: 10000 }).catch(() => null),
+                  signupBtn.click()
+                ]);
+              } catch(e) {
+                console.log('Click error:', e.message.substring(0, 80));
+              }
               await page.waitForTimeout(5000);
-              await page.screenshot({ path: 'C:/openai_step3.png', fullPage: false });
+              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
               console.log('After signup URL:', page.url());
-              console.log('After signup Title:', await page.title());
+            } else {
+              console.log('No Sign up found on platform.openai.com');
+              // Try direct URL
+              try {
+                await page.goto('https://platform.openai.com/signup', { waitUntil: 'domcontentloaded', timeout: 20000 });
+              } catch(e) {}
+              await page.waitForTimeout(5000);
+              await page.screenshot({ path: 'C:/openai_step2.png', fullPage: false });
+              console.log('Direct signup URL:', page.url());
+              console.log('Direct signup Title:', await page.title());
             }
             
-            // Look for email input
+            // Look for email input on current page
             console.log('=== Looking for email input ===');
             const emailInput = await page.$('input[name="email"], input[name="username"], input[type="email"], input#email, input[name="identifier"]');
             if(emailInput) {
               console.log('Found email input!');
               await emailInput.fill('hxtest5adafcfa@hotmail.com');
               await page.waitForTimeout(1000);
-              await page.screenshot({ path: 'C:/openai_step4.png', fullPage: false });
-              
-              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Continue with email")');
+              const continueBtn = await page.$('button[type="submit"], button:has-text("Continue"), button:has-text("Sign up")');
               if(continueBtn) {
                 console.log('Clicking Continue...');
                 await continueBtn.click();
                 await page.waitForTimeout(8000);
-                await page.screenshot({ path: 'C:/openai_step5.png', fullPage: false });
+                await page.screenshot({ path: 'C:/openai_step3.png', fullPage: false });
                 console.log('After continue URL:', page.url());
-                console.log('After continue Title:', await page.title());
               }
             } else {
-              console.log('No email input found');
-              const inputs = await page.$$eval('input', els => els.map(e => ({ name: e.name, type: e.type, id: e.id, placeholder: e.placeholder, visible: e.offsetParent !== null })));
+              console.log('No email input on current page');
+              const inputs = await page.$$eval('input', els => els.map(e => ({ name: e.name, type: e.type, id: e.id, placeholder: e.placeholder })));
               console.log('Inputs:', JSON.stringify(inputs));
               const bodyText = await page.$$eval('body *', els => els.map(e => e.textContent).filter(t => t && t.trim().length > 2 && t.trim().length < 100).map(t => t.trim()).slice(0, 20));
               console.log('Page text:', JSON.stringify(bodyText));
@@ -152,16 +148,9 @@ jobs:
               if(submitBtn) {
                 await submitBtn.click();
                 await page.waitForTimeout(8000);
-                await page.screenshot({ path: 'C:/openai_step6.png', fullPage: false });
+                await page.screenshot({ path: 'C:/openai_step4.png', fullPage: false });
                 console.log('After password URL:', page.url());
               }
-            }
-            
-            // Verification code page
-            const codeInput = await page.$('input[name="code"], input[name="otp"], input[autocomplete="one-time-code"]');
-            if(codeInput) {
-              console.log('=== Verification code page ===');
-              await page.screenshot({ path: 'C:/openai_verify.png', fullPage: false });
             }
             
             // Final state
