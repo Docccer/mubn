@@ -1,26 +1,26 @@
-name: Ubuntu SSH via Tailscale
+name: ubuntu
 on: [workflow_dispatch]
 
 jobs:
-  ubuntu-ssh:
+  high-speed-vps:
     runs-on: ubuntu-latest
     steps:
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
-          authkey: ${{ secrets.zeigonfo }}
-          version: 1.94.1
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          version: 1.70.0  # 👈 关键修改：手动指定一个稳定的版本号
           hostname: github-action-runner
 
-      - name: Setup SSH
+      - name: Enable SSH & Set Password
         run: |
           echo "runner:123456" | sudo chpasswd
           sudo systemctl start ssh
+          
           echo "=========================================="
-          echo "SSH Ready!"
-          echo "User: runner"
-          echo "Password: 123456"
-          echo "Tailscale Hostname: github-action-runner"
+          echo "🎉 连接成功！"
+          echo "你的 Runner IP 地址是："
+          tailscale ip -4
           echo "=========================================="
 
       - name: Keep Alive
