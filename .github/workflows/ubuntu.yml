@@ -8,7 +8,7 @@ jobs:
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
-          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          authkey: ${{ secrets.zeigonfo }}
           version: 1.70.0  # 👈 关键修改：手动指定一个稳定的版本号
           hostname: github-action-runner
 
