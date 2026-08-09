@@ -81,20 +81,14 @@ jobs:
             '-R', "0.0.0.0:$env:SELECTED_PORT:127.0.0.1:22",
             'tunnel@20.243.210.171'
           )
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = $sshPath
-          $psi.UseShellExecute = $false
-          $psi.RedirectStandardError = $true
-          $psi.RedirectStandardOutput = $true
-          $psi.CreateNoWindow = $true
-          foreach ($arg in $arguments) {
-            [void]$psi.ArgumentList.Add($arg)
-          }
-          $process = [System.Diagnostics.Process]::Start($psi)
+          $argString = ($arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
+          $stdoutLog = Join-Path $env:TEMP 'ssh_tunnel.out'
+          $stderrLog = Join-Path $env:TEMP 'ssh_tunnel.err'
+          $process = Start-Process -FilePath $sshPath -ArgumentList $argString -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
           Start-Sleep -Seconds 8
           if ($process.HasExited) {
-            $stdout = $process.StandardOutput.ReadToEnd()
-            $stderr = $process.StandardError.ReadToEnd()
+            $stdout = if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Raw } else { '' }
+            $stderr = if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw } else { '' }
             Write-Error "Tunnel process exited with code $($process.ExitCode)"
             if ($stderr) { Write-Error $stderr }
             if ($stdout) { Write-Error $stdout }
