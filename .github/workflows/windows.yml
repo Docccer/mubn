@@ -41,6 +41,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
           [System.IO.File]::WriteAllText("$env:USERPROFILE\.ssh\vps_key", $env:VPS_SSH_PRIVATE_KEY + "`n")
+          icacls "$env:USERPROFILE\.ssh\vps_key" /inheritance:r | Out-Null
+          icacls "$env:USERPROFILE\.ssh\vps_key" /grant:r "$env:USERNAME:F" | Out-Null
 
       - name: Select free SSH tunnel port
         shell: powershell
@@ -68,17 +70,25 @@ jobs:
           $arguments = @(
             '-i', "$env:USERPROFILE\.ssh\vps_key",
             '-o', 'StrictHostKeyChecking=no',
-                        '-o', 'ServerAliveInterval=30',
+            '-o', 'ServerAliveInterval=30',
             '-o', 'ServerAliveCountMax=3',
             '-o', 'ExitOnForwardFailure=yes',
             '-N',
             '-R', "0.0.0.0:$env:SELECTED_PORT:127.0.0.1:22",
             'tunnel@20.243.210.171'
           )
-          $process = Start-Process -FilePath $sshPath -ArgumentList $arguments -WindowStyle Hidden -PassThru
+          $stdoutLog = Join-Path $env:TEMP 'ssh_tunnel.out'
+          $stderrLog = Join-Path $env:TEMP 'ssh_tunnel.err'
+          $process = Start-Process -FilePath $sshPath -ArgumentList $arguments -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
           Start-Sleep -Seconds 5
           if ($process.HasExited) {
             Write-Error "Tunnel process exited with code $($process.ExitCode)"
+            if (Test-Path $stderrLog) {
+              Get-Content $stderrLog -Tail 20 | ForEach-Object { Write-Error $_ }
+            }
+            if (Test-Path $stdoutLog) {
+              Get-Content $stdoutLog -Tail 20 | ForEach-Object { Write-Error $_ }
+            }
             exit 1
           }
 
