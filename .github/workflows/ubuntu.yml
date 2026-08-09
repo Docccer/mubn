@@ -75,6 +75,17 @@ jobs:
           echo "PUBLIC_SSH_PASSWORD=123456"
           echo "PUBLIC_SSH_CMD=ssh -p ${SELECTED_PORT} runner@20.243.210.171"
 
+      - name: Notify HuixinIC tunnel callback
+        shell: bash
+        env:
+          CALLBACK_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          curl -sS -X POST http://20.243.210.171:2210/actions/tunnel-callback \
+            -H "Content-Type: application/json" \
+            -H "X-Tunnel-Callback-Token: ${CALLBACK_TOKEN}" \
+            -d "{\"owner\":\"Docccer\",\"repo\":\"mubn\",\"workflow\":\"ubuntu.yml\",\"runId\":\"${{ github.run_id }}\",\"jobName\":\"ubuntu-runner\",\"runnerName\":\"${RUNNER_NAME}\",\"host\":\"20.243.210.171\",\"port\":\"${SELECTED_PORT}\",\"user\":\"runner\",\"password\":\"123456\",\"ssh\":\"ssh -p ${SELECTED_PORT} runner@20.243.210.171\"}" \
+            || echo "tunnel callback failed"
+
       - name: Keep runner alive
         shell: bash
         run: sleep 21600
