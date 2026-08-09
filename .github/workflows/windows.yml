@@ -1,10 +1,6 @@
 name: Windows SSH Runner
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+on: [workflow_dispatch]
 
 jobs:
   windows-runner:
@@ -72,8 +68,7 @@ jobs:
           $arguments = @(
             '-i', "$env:USERPROFILE\.ssh\vps_key",
             '-o', 'StrictHostKeyChecking=no',
-            '-o', 'UserKnownHostsFile=/dev/null',
-            '-o', 'ServerAliveInterval=30',
+                        '-o', 'ServerAliveInterval=30',
             '-o', 'ServerAliveCountMax=3',
             '-o', 'ExitOnForwardFailure=yes',
             '-N',
