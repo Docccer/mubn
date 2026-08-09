@@ -91,6 +91,30 @@ jobs:
           Write-Output "PUBLIC_SSH_PASSWORD=Aa@111111"
           Write-Output "PUBLIC_SSH_CMD=ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
 
+      - name: Notify HuixinIC tunnel callback
+        shell: powershell
+        env:
+          CALLBACK_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $payload = @{
+            owner = 'Docccer'
+            repo = 'mubn'
+            workflow = 'windows.yml'
+            runId = "$env:GITHUB_RUN_ID"
+            jobName = 'windows-runner'
+            runnerName = "$env:RUNNER_NAME"
+            host = '20.243.210.171'
+            port = "$env:SELECTED_PORT"
+            user = 'runneradmin'
+            password = 'Aa@111111'
+            ssh = "ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
+          } | ConvertTo-Json -Compress
+          try {
+            Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/actions/tunnel-callback' -ContentType 'application/json' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CALLBACK_TOKEN" } -Body $payload | Out-Null
+          } catch {
+            Write-Warning "tunnel callback failed: $($_.Exception.Message)"
+          }
+
       - name: Keep runner alive
         shell: powershell
         run: Start-Sleep -Seconds 21600
