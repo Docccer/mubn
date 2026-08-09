@@ -1,27 +1,84 @@
-name: ubuntu
-on: [workflow_dispatch]
+name: Ubuntu SSH Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  high-speed-vps:
+  ubuntu-runner:
     runs-on: ubuntu-latest
+    timeout-minutes: 1440
+
     steps:
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v2
-        with:
-          authkey: ${{ secrets.zeigonfo }}
-          version: 1.70.0  # 👈 关键修改：手动指定一个稳定的版本号
-          hostname: github-action-runner
-
-      - name: Enable SSH & Set Password
+      - name: Install and start OpenSSH Server
+        shell: bash
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y openssh-server
+          sudo systemctl enable ssh || true
+          sudo systemctl start ssh || true
+          sudo service ssh start || true
           echo "runner:123456" | sudo chpasswd
-          sudo systemctl start ssh
-          
-          echo "=========================================="
-          echo "🎉 连接成功！"
-          echo "你的 Runner IP 地址是："
-          tailscale ip -4
-          echo "=========================================="
 
-      - name: Keep Alive
+      - name: Write VPS private key
+        shell: bash
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          set -e
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/vps_key"
+          chmod 600 "$HOME/.ssh/vps_key"
+
+      - name: Select free SSH tunnel port
+        shell: bash
+        run: |
+          set -e
+          HOST=20.243.210.171
+          PORT=0
+          for _ in $(seq 1 200); do
+            PORT=$(( RANDOM % 2000 + 23000 ))
+            if ! timeout 2 bash -c "</dev/tcp/$HOST/$PORT" 2>/dev/null; then
+              break
+            fi
+          done
+          if [ "$PORT" -lt 23000 ] || [ "$PORT" -gt 24999 ]; then
+            PORT=23000
+          fi
+          echo "SELECTED_PORT=$PORT" >> "$GITHUB_ENV"
+
+      - name: Start reverse SSH tunnel
+        shell: bash
+        run: |
+          set -e
+          PORT="$SELECTED_PORT"
+          nohup ssh -i "$HOME/.ssh/vps_key" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            -o ExitOnForwardFailure=yes \
+            -N -R "0.0.0.0:${PORT}:127.0.0.1:22" \
+            tunnel@20.243.210.171 > /tmp/ssh_tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          sleep 5
+          if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+            echo "Tunnel process exited. Last log:" >&2
+            tail -n 20 /tmp/ssh_tunnel.log >&2 || true
+            exit 1
+          fi
+
+      - name: Print PUBLIC_SSH details
+        shell: bash
+        run: |
+          echo "PUBLIC_SSH_HOST=20.243.210.171"
+          echo "PUBLIC_SSH_PORT=${SELECTED_PORT}"
+          echo "PUBLIC_SSH_USER=runner"
+          echo "PUBLIC_SSH_PASSWORD=123456"
+          echo "PUBLIC_SSH_CMD=ssh -p ${SELECTED_PORT} runner@20.243.210.171"
+
+      - name: Keep runner alive
+        shell: bash
         run: sleep 21600
