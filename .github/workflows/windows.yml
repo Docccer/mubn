@@ -1,51 +1,101 @@
-name: Windows Pure SSH via Tailscale
-on: [workflow_dispatch]
+name: Windows SSH Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  windows-ssh:
+  windows-runner:
     runs-on: windows-latest
+    timeout-minutes: 1440
+
     steps:
-      # 1. Download and install Tailscale
-      - name: Install Tailscale
+      - name: Configure runneradmin account
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile tailscale-setup.exe
-          Start-Process -FilePath "tailscale-setup.exe" -ArgumentList "/quiet", "/norestart" -Wait
+          if (Get-LocalUser -Name runneradmin -ErrorAction SilentlyContinue) {
+            net user runneradmin "Aa@111111"
+          } else {
+            net user runneradmin "Aa@111111" /add
+          }
 
-      # 2. Connect to Tailscale (注意替换 secrets 名字)
-      - name: Connect to Tailscale
+      - name: Install and start OpenSSH Server
         shell: powershell
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey "${{ secrets.zeigonfo }}" --hostname "github-win-ssh" --unattended
+          $capability = Get-WindowsCapability -Online -Name OpenSSH.Server* | Select-Object -First 1
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name $capability.Name
+          }
+          Start-Service sshd -ErrorAction SilentlyContinue
+          Set-Service -Name sshd -StartupType Automatic
 
-      # 3. Setup OpenSSH Server
-      - name: Setup OpenSSH Server
+      - name: Set default SSH shell to PowerShell
         shell: powershell
         run: |
-          # (A) Set user password
-          net user runneradmin "Aa@111111" 
+          New-Item -Path 'HKLM:\SOFTWARE\OpenSSH' -Force | Out-Null
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -PropertyType String -Force | Out-Null
+          Restart-Service sshd -ErrorAction SilentlyContinue
 
-          # (B) Install Windows OpenSSH Server
-          Write-Host "Installing OpenSSH Server..."
-          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+      - name: Write VPS private key
+        shell: powershell
+        env:
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: |
+          New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
+          [System.IO.File]::WriteAllText("$env:USERPROFILE\.ssh\vps_key", $env:VPS_SSH_PRIVATE_KEY)
 
-          # (C) Start sshd service
-          Start-Service sshd
-          Set-Service -Name sshd -StartupType 'Automatic'
+      - name: Select free SSH tunnel port
+        shell: powershell
+        run: |
+          $port = 0
+          for ($i = 0; $i -lt 200; $i++) {
+            $port = Get-Random -Minimum 23000 -Maximum 25000
+            $open = Test-NetConnection -ComputerName 20.243.210.171 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue
+            if (-not $open) {
+              break
+            }
+          }
+          if ($port -lt 23000 -or $port -gt 24999) {
+            $port = 23000
+          }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "SELECTED_PORT=$port`n")
 
-          # (D) Change Default Shell to PowerShell
-          New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -PropertyType String -Force
+      - name: Start reverse SSH tunnel
+        shell: powershell
+        run: |
+          $sshPath = 'C:\Windows\System32\OpenSSH\ssh.exe'
+          if (-not (Test-Path $sshPath)) {
+            $sshPath = 'ssh.exe'
+          }
+          $arguments = @(
+            '-i', "$env:USERPROFILE\.ssh\vps_key",
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            '-o', 'ServerAliveInterval=30',
+            '-o', 'ServerAliveCountMax=3',
+            '-o', 'ExitOnForwardFailure=yes',
+            '-N',
+            '-R', "0.0.0.0:$env:SELECTED_PORT:127.0.0.1:22",
+            'tunnel@20.243.210.171'
+          )
+          $process = Start-Process -FilePath $sshPath -ArgumentList $arguments -WindowStyle Hidden -PassThru
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) {
+            Write-Error "Tunnel process exited with code $($process.ExitCode)"
+            exit 1
+          }
 
-          # (E) Display Connection Info
-          Write-Host "=========================================="
-          Write-Host "SUCCESS! Windows SSH Server is Ready."
-          Write-Host "Your Tailscale IP Address is:"
-          & "C:\Program Files\Tailscale\tailscale.exe" ip -4
-          Write-Host ""
-          Write-Host "Command: ssh runneradmin@<Your_IP>"
-          Write-Host "Password: Aa@111111"
-          Write-Host "=========================================="
+      - name: Print PUBLIC_SSH details
+        shell: powershell
+        run: |
+          Write-Output "PUBLIC_SSH_HOST=20.243.210.171"
+          Write-Output "PUBLIC_SSH_PORT=$env:SELECTED_PORT"
+          Write-Output "PUBLIC_SSH_USER=runneradmin"
+          Write-Output "PUBLIC_SSH_PASSWORD=Aa@111111"
+          Write-Output "PUBLIC_SSH_CMD=ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
 
-      # 4. Keep Alive (6 hours)
-      - name: Keep Alive
+      - name: Keep runner alive
+        shell: powershell
         run: Start-Sleep -Seconds 21600
