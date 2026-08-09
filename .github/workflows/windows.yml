@@ -52,7 +52,7 @@ jobs:
         shell: powershell
         continue-on-error: true
         run: |
-          & 'C:\Windows\System32\OpenSSH\ssh.exe' -v -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i "$env:USERPROFILE\.ssh\vps_key" tunnel@20.243.210.171 'exit' 2>&1 | Select-Object -Last 50 | ForEach-Object { Write-Output $_ }
+          cmd /c "C:\Windows\System32\OpenSSH\ssh.exe -v -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i `"$env:USERPROFILE\.ssh\vps_key`" tunnel@20.243.210.171 exit 2>&1"
 
       - name: Select free SSH tunnel port
         shell: powershell
