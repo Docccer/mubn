@@ -64,8 +64,10 @@ jobs:
           }
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "SELECTED_PORT=$port`n")
 
-      - name: Start reverse SSH tunnel
+      - name: Start tunnel and keep runner alive
         shell: powershell
+        env:
+          CALLBACK_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
         run: |
           $sshPath = 'C:\Windows\System32\OpenSSH\ssh.exe'
           if (-not (Test-Path $sshPath)) {
@@ -95,20 +97,12 @@ jobs:
             exit 1
           }
 
-      - name: Print PUBLIC_SSH details
-        shell: powershell
-        run: |
           Write-Output "PUBLIC_SSH_HOST=20.243.210.171"
           Write-Output "PUBLIC_SSH_PORT=$env:SELECTED_PORT"
           Write-Output "PUBLIC_SSH_USER=runneradmin"
           Write-Output "PUBLIC_SSH_PASSWORD=Aa@111111"
           Write-Output "PUBLIC_SSH_CMD=ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
 
-      - name: Notify HuixinIC tunnel callback
-        shell: powershell
-        env:
-          CALLBACK_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
-        run: |
           $payload = @{
             owner = 'Docccer'
             repo = 'mubn'
@@ -128,6 +122,4 @@ jobs:
             Write-Warning "tunnel callback failed: $($_.Exception.Message)"
           }
 
-      - name: Keep runner alive
-        shell: powershell
-        run: Start-Sleep -Seconds 21600
+          Start-Sleep -Seconds 21600
