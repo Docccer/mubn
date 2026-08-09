@@ -41,8 +41,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
           [System.IO.File]::WriteAllText("$env:USERPROFILE\.ssh\vps_key", $env:VPS_SSH_PRIVATE_KEY + "`n")
-          icacls "$env:USERPROFILE\.ssh\vps_key" /inheritance:r | Out-Null
-          icacls "$env:USERPROFILE\.ssh\vps_key" /grant:r "$env:USERNAME:F" | Out-Null
+          $keyPath = "$env:USERPROFILE\.ssh\vps_key"
+          $acl = Get-Acl -LiteralPath $keyPath
+          $acl.SetAccessRuleProtection($true, $false)
+          $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME, 'FullControl', 'Allow')
+          $acl.AddAccessRule($rule)
+          Set-Acl -LiteralPath $keyPath -AclObject $acl
 
       - name: Select free SSH tunnel port
         shell: powershell
