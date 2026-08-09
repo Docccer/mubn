@@ -44,7 +44,7 @@ jobs:
           VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
         run: |
           New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
-          [System.IO.File]::WriteAllText("$env:USERPROFILE\.ssh\vps_key", $env:VPS_SSH_PRIVATE_KEY)
+          [System.IO.File]::WriteAllText("$env:USERPROFILE\.ssh\vps_key", $env:VPS_SSH_PRIVATE_KEY + "`n")
 
       - name: Select free SSH tunnel port
         shell: powershell
