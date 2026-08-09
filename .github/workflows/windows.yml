@@ -48,12 +48,6 @@ jobs:
           $acl.AddAccessRule($rule)
           Set-Acl -LiteralPath $keyPath -AclObject $acl
 
-      - name: Debug VPS SSH auth
-        shell: powershell
-        continue-on-error: true
-        run: |
-          cmd /c "C:\Windows\System32\OpenSSH\ssh.exe -v -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i `"$env:USERPROFILE\.ssh\vps_key`" tunnel@20.243.210.171 exit 2>&1"
-
       - name: Select free SSH tunnel port
         shell: powershell
         run: |
@@ -84,7 +78,7 @@ jobs:
             '-o', 'ServerAliveCountMax=3',
             '-o', 'ExitOnForwardFailure=yes',
             '-N',
-            '-R', "0.0.0.0:$env:SELECTED_PORT:127.0.0.1:22",
+            '-R', "0.0.0.0:${env:SELECTED_PORT}:127.0.0.1:22",
             'tunnel@20.243.210.171'
           )
           $argString = ($arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
