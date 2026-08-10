@@ -34,6 +34,21 @@ jobs:
           New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -PropertyType String -Force | Out-Null
           Restart-Service sshd -ErrorAction SilentlyContinue
 
+      - name: Enable and optimize RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations' -Name 'DWMFRAMEINTERVAL' -Value 15 -PropertyType DWORD -Force
+          $TSPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (!(Test-Path $TSPath)) {
+            New-Item -Path $TSPath -Force | Out-Null
+          }
+          New-ItemProperty -Path $TSPath -Name 'VGPUEncoding' -Value 1 -PropertyType DWORD -Force
+          New-ItemProperty -Path $TSPath -Name 'AVC444ModePreferred' -Value 1 -PropertyType DWORD -Force
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member runneradmin -ErrorAction SilentlyContinue
+          Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
+
       - name: Write VPS private key
         shell: powershell
         env:
@@ -48,21 +63,33 @@ jobs:
           $acl.AddAccessRule($rule)
           Set-Acl -LiteralPath $keyPath -AclObject $acl
 
-      - name: Select free SSH tunnel port
+      - name: Select free SSH and RDP tunnel ports
         shell: powershell
         run: |
-          $port = 0
-          for ($i = 0; $i -lt 200; $i++) {
+          $sshPort = 0
+          $rdpPort = 0
+          for ($i = 0; $i -lt 300; $i++) {
             $port = Get-Random -Minimum 23000 -Maximum 25000
             $open = Test-NetConnection -ComputerName 20.243.210.171 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue
-            if (-not $open) {
+            if (-not $open -and $port -ne $sshPort -and $port -ne $rdpPort) {
+              if ($sshPort -eq 0) {
+                $sshPort = $port
+              } elseif ($rdpPort -eq 0) {
+                $rdpPort = $port
+              }
+            }
+            if ($sshPort -gt 0 -and $rdpPort -gt 0) {
               break
             }
           }
-          if ($port -lt 23000 -or $port -gt 24999) {
-            $port = 23000
+          if ($sshPort -lt 23000 -or $sshPort -gt 24999) {
+            $sshPort = 23000
           }
-          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "SELECTED_PORT=$port`n")
+          if ($rdpPort -lt 23000 -or $rdpPort -gt 24999) {
+            $rdpPort = 23001
+          }
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "SELECTED_PORT=$sshPort`n")
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "RDP_PORT=$rdpPort`n")
 
       - name: Start tunnel and keep runner alive
         shell: powershell
@@ -81,6 +108,7 @@ jobs:
             '-o', 'ExitOnForwardFailure=yes',
             '-N',
             '-R', "0.0.0.0:${env:SELECTED_PORT}:127.0.0.1:22",
+            '-R', "0.0.0.0:${env:RDP_PORT}:127.0.0.1:3389",
             'tunnel@20.243.210.171'
           )
           $argString = ($arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
@@ -102,6 +130,11 @@ jobs:
           Write-Output "PUBLIC_SSH_USER=runneradmin"
           Write-Output "PUBLIC_SSH_PASSWORD=Aa@111111"
           Write-Output "PUBLIC_SSH_CMD=ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
+          Write-Output "PUBLIC_RDP_HOST=20.243.210.171"
+          Write-Output "PUBLIC_RDP_PORT=$env:RDP_PORT"
+          Write-Output "PUBLIC_RDP_USER=runneradmin"
+          Write-Output "PUBLIC_RDP_PASSWORD=Aa@111111"
+          Write-Output "PUBLIC_RDP_CMD=mstsc /v:20.243.210.171:$env:RDP_PORT"
 
           $payload = @{
             owner = 'Docccer'
@@ -115,6 +148,11 @@ jobs:
             user = 'runneradmin'
             password = 'Aa@111111'
             ssh = "ssh -p $env:SELECTED_PORT runneradmin@20.243.210.171"
+            rdpHost = '20.243.210.171'
+            rdpPort = "$env:RDP_PORT"
+            rdpUser = 'runneradmin'
+            rdpPassword = 'Aa@111111'
+            rdp = "mstsc /v:20.243.210.171:$env:RDP_PORT"
           } | ConvertTo-Json -Compress
           try {
             Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/actions/tunnel-callback' -ContentType 'application/json' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CALLBACK_TOKEN" } -Body $payload | Out-Null
