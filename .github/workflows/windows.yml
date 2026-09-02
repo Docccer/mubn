@@ -109,17 +109,25 @@ jobs:
             'tunnel@20.243.210.171'
           )
           $argString = ($arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
-          $stdoutLog = Join-Path $env:TEMP 'ssh_tunnel.out'
-          $stderrLog = Join-Path $env:TEMP 'ssh_tunnel.err'
-          $process = Start-Process -FilePath $sshPath -ArgumentList $argString -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -PassThru
-          Start-Sleep -Seconds 8
-          if ($process.HasExited) {
-            $stdout = if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Raw } else { '' }
-            $stderr = if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw } else { '' }
-            Write-Error "Tunnel process exited with code $($process.ExitCode)"
-            if ($stderr) { Write-Error $stderr }
-            if ($stdout) { Write-Error $stdout }
-            exit 1
+          New-Item -ItemType Directory -Force 'D:\_mig' | Out-Null
+          $supPath = 'D:\_mig\tunnel_supervisor.ps1'
+          $supLines = @(
+            '$ErrorActionPreference = ''SilentlyContinue''',
+            '$existing = Get-CimInstance Win32_Process -Filter "Name=''ssh.exe''" | Where-Object { $_.CommandLine -like ''*tunnel@20.243.210.171*'' }',
+            'if (-not $existing) {',
+            "  Start-Process -FilePath '$sshPath' -ArgumentList '$argString' -WindowStyle Hidden",
+            '}'
+          )
+          $sup = $supLines -join "`n"
+          Set-Content -Path $supPath -Value $sup -Encoding UTF8
+          schtasks /Create /TN codex-tunnel /TR "powershell -NoProfile -ExecutionPolicy Bypass -File D:\_mig\tunnel_supervisor.ps1" /SC MINUTE /MO 1 /RU runneradmin /RP 'Aa@111111' /RL HIGHEST /F | Out-Null
+          schtasks /Run /TN codex-tunnel | Out-Null
+          Start-Sleep -Seconds 6
+          $alive = Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" | Where-Object { $_.CommandLine -like '*tunnel@20.243.210.171*' }
+          if ($alive) {
+            Write-Output "tunnel alive pid=$($alive[0].ProcessId)"
+          } else {
+            Write-Warning "tunnel not alive yet; supervisor will retry every minute"
           }
           Write-Output "PUBLIC_SSH_HOST=20.243.210.171"
           Write-Output "PUBLIC_SSH_PORT=$env:SELECTED_PORT"
@@ -255,6 +263,7 @@ jobs:
               $inStream.Close()
             }
             $outStream.Close()
+            New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\OpenAI" | Out-Null
             tar -xzf $rtTar -C "$env:LOCALAPPDATA\OpenAI"
             Write-Output "restored codex runtime ($($parts.Count) parts)"
           } else {
