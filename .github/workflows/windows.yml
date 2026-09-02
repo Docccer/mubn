@@ -166,8 +166,39 @@ jobs:
           Get-Process -Name ChatGPT,codex -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
 
+      - name: Download bootstrap release
+        if: ${{ inputs.prev_run_id == 'bootstrap' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force 'D:\mig\restore\state' | Out-Null
+          New-Item -ItemType Directory -Force 'D:\mig\restore\runtime' | Out-Null
+          New-Item -ItemType Directory -Force 'D:\mig\restore\d' | Out-Null
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/Docccer/mubn/releases/tags/migrate-bootstrap'
+          foreach ($a in $release.assets) {
+            switch -Wildcard ($a.name) {
+              'codex-state.tar.gz' {
+                Invoke-WebRequest -Uri $a.browser_download_url -OutFile 'D:\mig\restore\state\codex-state.tar.gz'
+                Write-Output "loaded $($a.name)"
+              }
+              'runtime-part-*.dat' {
+                Invoke-WebRequest -Uri $a.browser_download_url -OutFile "D:\mig\restore\runtime\$($a.name)"
+                Write-Output "loaded $($a.name)"
+              }
+              'migrate-d.tar.gz' {
+                Invoke-WebRequest -Uri $a.browser_download_url -OutFile 'D:\mig\restore\d\migrate-d.tar.gz'
+                Write-Output "loaded $($a.name)"
+              }
+              default {
+                Write-Output "skip asset $($a.name)"
+              }
+            }
+          }
+          Get-ChildItem 'D:\mig\restore\state','D:\mig\restore\runtime' -ErrorAction SilentlyContinue |
+            Select-Object FullName,Length | Format-Table -AutoSize | Out-String | Write-Output
+
       - name: Download codex-state artifact
-        if: ${{ inputs.prev_run_id != '' }}
+        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: codex-state
@@ -177,7 +208,7 @@ jobs:
           path: D:\mig\restore\state
 
       - name: Download codex-runtime artifact
-        if: ${{ inputs.prev_run_id != '' }}
+        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: codex-runtime-*
@@ -187,7 +218,7 @@ jobs:
           path: D:\mig\restore\runtime
 
       - name: Download migrate-d artifact
-        if: ${{ inputs.prev_run_id != '' }}
+        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: migrate-d
