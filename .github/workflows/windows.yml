@@ -1,12 +1,21 @@
-name: Windows SSH Runner
+name: Windows SSH Runner (Codex Migrate)
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      prev_run_id:
+        description: '源 run id（还原该 run 的快照；留空=全新 runner）'
+        required: false
+        default: ''
+      swap_hours:
+        description: '换机周期（小时）'
+        required: false
+        default: '5'
 
 jobs:
   windows-runner:
     runs-on: windows-latest
     timeout-minutes: 1440
-
     steps:
       - name: Configure runneradmin account
         shell: powershell
@@ -72,34 +81,23 @@ jobs:
             $port = Get-Random -Minimum 23000 -Maximum 25000
             $open = Test-NetConnection -ComputerName 20.243.210.171 -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue
             if (-not $open -and $port -ne $sshPort -and $port -ne $rdpPort) {
-              if ($sshPort -eq 0) {
-                $sshPort = $port
-              } elseif ($rdpPort -eq 0) {
-                $rdpPort = $port
-              }
+              if ($sshPort -eq 0) { $sshPort = $port }
+              elseif ($rdpPort -eq 0) { $rdpPort = $port }
             }
-            if ($sshPort -gt 0 -and $rdpPort -gt 0) {
-              break
-            }
+            if ($sshPort -gt 0 -and $rdpPort -gt 0) { break }
           }
-          if ($sshPort -lt 23000 -or $sshPort -gt 24999) {
-            $sshPort = 23000
-          }
-          if ($rdpPort -lt 23000 -or $rdpPort -gt 24999) {
-            $rdpPort = 23001
-          }
+          if ($sshPort -lt 23000 -or $sshPort -gt 24999) { $sshPort = 23000 }
+          if ($rdpPort -lt 23000 -or $rdpPort -gt 24999) { $rdpPort = 23001 }
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "SELECTED_PORT=$sshPort`n")
           [System.IO.File]::AppendAllText($env:GITHUB_ENV, "RDP_PORT=$rdpPort`n")
 
-      - name: Start tunnel and keep runner alive
+      - name: Start tunnel and register callback
         shell: powershell
         env:
           CALLBACK_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
         run: |
           $sshPath = 'C:\Windows\System32\OpenSSH\ssh.exe'
-          if (-not (Test-Path $sshPath)) {
-            $sshPath = 'ssh.exe'
-          }
+          if (-not (Test-Path $sshPath)) { $sshPath = 'ssh.exe' }
           $arguments = @(
             '-i', "$env:USERPROFILE\.ssh\vps_key",
             '-o', 'StrictHostKeyChecking=no',
@@ -124,7 +122,6 @@ jobs:
             if ($stdout) { Write-Error $stdout }
             exit 1
           }
-
           Write-Output "PUBLIC_SSH_HOST=20.243.210.171"
           Write-Output "PUBLIC_SSH_PORT=$env:SELECTED_PORT"
           Write-Output "PUBLIC_SSH_USER=runneradmin"
@@ -160,4 +157,312 @@ jobs:
             Write-Warning "tunnel callback failed: $($_.Exception.Message)"
           }
 
-          Start-Sleep -Seconds 21600
+      - name: Install Codex desktop (winget)
+        shell: powershell
+        run: |
+          $w = winget install --id=9PLM9XGG6VKS --source=msstore --accept-package-agreements --accept-source-agreements
+          Write-Output $w
+          Start-Sleep -Seconds 3
+          Get-Process -Name ChatGPT,codex -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+      - name: Download codex-state artifact
+        if: ${{ inputs.prev_run_id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: codex-state
+          run-id: ${{ inputs.prev_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+          path: D:\mig\restore\state
+
+      - name: Download codex-runtime artifact
+        if: ${{ inputs.prev_run_id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: codex-runtime-*
+          run-id: ${{ inputs.prev_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+          path: D:\mig\restore\runtime
+
+      - name: Download migrate-d artifact
+        if: ${{ inputs.prev_run_id != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: migrate-d
+          run-id: ${{ inputs.prev_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+          path: D:\mig\restore\d
+
+      - name: Extract restored data
+        if: ${{ inputs.prev_run_id != '' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Process -Name ChatGPT,codex -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+          # 1. .codex state
+          $stateTar = 'D:\mig\restore\state\codex-state.tar.gz'
+          if (Test-Path $stateTar) {
+            tar -xzf $stateTar -C "$env:USERPROFILE"
+            Write-Output "restored .codex"
+          } else {
+            Write-Warning "codex-state artifact missing"
+          }
+
+          # 2. codex runtime (concatenate parts in order)
+          $rtDir = 'D:\mig\restore\runtime'
+          $rtTar = 'D:\mig\restore\codex-runtime.tar.gz'
+          $parts = Get-ChildItem "$rtDir\runtime-part-*.dat" -ErrorAction SilentlyContinue | Sort-Object Name
+          if ($parts.Count -gt 0) {
+            $outStream = [System.IO.File]::Create($rtTar)
+            foreach ($p in $parts) {
+              $inStream = [System.IO.File]::OpenRead($p.FullName)
+              $inStream.CopyTo($outStream)
+              $inStream.Close()
+            }
+            $outStream.Close()
+            tar -xzf $rtTar -C "$env:LOCALAPPDATA\OpenAI"
+            Write-Output "restored codex runtime ($($parts.Count) parts)"
+          } else {
+            Write-Warning "codex-runtime artifact missing"
+          }
+
+          # 3. D: drive snapshot
+          $dTar = 'D:\mig\restore\d\migrate-d.tar.gz'
+          if (Test-Path $dTar) {
+            tar -xzf $dTar -C 'D:\'
+            Write-Output "restored D: snapshot"
+          } else {
+            Write-Warning "migrate-d artifact missing"
+          }
+
+          # 4. Ensure CODEX_CLI_PATH points at an existing native exe.
+          $cfg = "$env:USERPROFILE\.codex\config.toml"
+          if (Test-Path $cfg) {
+            $m = Select-String -Path $cfg -Pattern "CODEX_CLI_PATH\s*=\s*'([^']+)'" | Select-Object -First 1
+            if ($m) {
+              $cli = $m.Matches[0].Groups[1].Value
+              if (-not (Test-Path $cli)) {
+                $wapp = Get-ChildItem 'C:\Program Files\WindowsApps\OpenAI.Codex_*' -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($wapp) {
+                  $res = Join-Path $wapp.FullName 'app\resources'
+                  $binDir = Split-Path $cli -Parent
+                  New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+                  foreach ($exe in @('codex.exe','codex-code-mode-host.exe','codex-command-runner.exe','codex-windows-sandbox-setup.exe','rg.exe')) {
+                    $srcExe = Join-Path $res $exe
+                    if (Test-Path $srcExe) { Copy-Item -Force $srcExe (Join-Path $binDir $exe) }
+                  }
+                  Write-Output "copied native exes to $binDir"
+                }
+              }
+            }
+          }
+
+      - name: Report ready to orchestrator
+        if: ${{ inputs.prev_run_id != '' }}
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; ready = $true } | ConvertTo-Json -Compress
+          try {
+            Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -ContentType 'application/json' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -Body $body -TimeoutSec 30 | Out-Null
+            Write-Output "reported ready runId=$env:GITHUB_RUN_ID"
+          } catch {
+            Write-Warning "report ready failed: $($_.Exception.Message)"
+          }
+
+      - name: Wait for migration signal and snapshot
+        id: prepare_snapshot
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $vps = 'http://20.243.210.171:2210'
+          $runId = $env:GITHUB_RUN_ID
+          $token = $env:CB_TOKEN
+          Write-Output "waiting for snapshot signal (runId=$runId)"
+
+          while ($true) {
+            try {
+              $r = Invoke-RestMethod "$vps/migrate/should_snapshot?runId=$runId" -Headers @{ 'X-Tunnel-Callback-Token' = $token } -TimeoutSec 20
+              if ($r.snapshot -eq $true) { break }
+            } catch {
+              Write-Warning "should_snapshot poll error: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds 15
+          }
+          Write-Output "snapshot signal received, stopping codex"
+
+          Get-Process -Name ChatGPT,codex -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 8
+
+          New-Item -ItemType Directory -Force -Path 'D:\_mig\upload' | Out-Null
+          Remove-Item 'D:\_mig\upload\codex-state.tar.gz' -Force -ErrorAction SilentlyContinue
+          Remove-Item 'D:\_mig\upload\codex-runtime.tar.gz' -Force -ErrorAction SilentlyContinue
+          Remove-Item 'D:\_mig\upload\d.tar.gz' -Force -ErrorAction SilentlyContinue
+          Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+
+          tar -czf 'D:\_mig\upload\codex-state.tar.gz' -C "$env:USERPROFILE" .codex
+          tar -czf 'D:\_mig\upload\codex-runtime.tar.gz' -C "$env:LOCALAPPDATA\OpenAI" Codex
+          tar --exclude='D:/_mig' --exclude='D:/$RECYCLE.BIN' --exclude='D:/System Volume Information' --exclude='D:/pagefile.sys' --exclude='D:/DumpStack.log.tmp' --exclude='D:/DATALOSS_WARNING_README.txt' --exclude='D:/a/_temp' --exclude='D:/a/_PipelineMapping' --exclude='D:/CollectGuestLogsTemp' -czf 'D:\_mig\upload\d.tar.gz' -C 'D:\' .
+
+          $chunkMB = 512; $chunkBytes = [int64]$chunkMB * 1MB
+          $src = 'D:\_mig\upload\codex-runtime.tar.gz'
+          $inFs = [System.IO.File]::OpenRead($src)
+          $buf = New-Object byte[] (8MB)
+          $part = 0; $written = [int64]0
+          $outPath = ('D:\_mig\upload\runtime-part-{0}.dat' -f $part)
+          $outFs = [System.IO.File]::Create($outPath)
+          try {
+            while ($true) {
+              $n = $inFs.Read($buf, 0, $buf.Length)
+              if ($n -le 0) { break }
+              $outFs.Write($buf, 0, $n); $written += $n
+              if ($written -ge $chunkBytes) {
+                $outFs.Close(); $part++
+                $outPath = ('D:\_mig\upload\runtime-part-{0}.dat' -f $part)
+                $outFs = [System.IO.File]::Create($outPath); $written = 0
+              }
+            }
+          } finally {
+            $outFs.Close(); $inFs.Close()
+          }
+          Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' | Where-Object { $_.Length -eq 0 -and $_.Name -ne 'runtime-part-0.dat' } | ForEach-Object { Remove-Item $_.FullName -Force }
+
+          $stateSize = (Get-Item 'D:\_mig\upload\codex-state.tar.gz').Length
+          $dSize = (Get-Item 'D:\_mig\upload\d.tar.gz').Length
+          $rtParts = Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' | Sort-Object Name
+          $rtTotal = 0; foreach ($p in $rtParts) { $rtTotal += $p.Length }
+          $total = [int64]$stateSize + [int64]$dSize + [int64]$rtTotal
+          $manifest = @{ total = $total; state = [int64]$stateSize; d = [int64]$dSize; runtime = @($rtParts | ForEach-Object { [int64]$_.Length }) } | ConvertTo-Json -Compress
+          [System.IO.File]::WriteAllText('D:\_mig\upload\manifest.json', $manifest)
+
+          $body = @{ runId = $runId; step = 'snapshot'; bytes_total = $total; bytes_done = 0 } | ConvertTo-Json -Compress
+          try {
+            Invoke-RestMethod -Method Post -Uri "$vps/migrate/report" -Headers @{ 'X-Tunnel-Callback-Token' = $token } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+          } catch {
+            Write-Warning "snapshot report failed: $($_.Exception.Message)"
+          }
+          Write-Output "SNAPSHOT_READY=true"
+          echo "SNAPSHOT_READY=true" >> $env:GITHUB_OUTPUT
+
+      - name: Upload codex-state
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-state
+          path: D:\_mig\upload\codex-state.tar.gz
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Report state progress
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $m = Get-Content 'D:\_mig\upload\manifest.json' | ConvertFrom-Json
+          $done = [int64]$m.state
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; step = 'uploading'; bytes_total = [int64]$m.total; bytes_done = $done } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+
+      - name: Upload runtime part 0
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-runtime-0
+          path: D:\_mig\upload\runtime-part-0.dat
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Report runtime progress 0
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $m = Get-Content 'D:\_mig\upload\manifest.json' | ConvertFrom-Json
+          $done = [int64]$m.state + [int64]$m.runtime[0]
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; step = 'uploading'; bytes_total = [int64]$m.total; bytes_done = $done } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+
+      - name: Upload runtime part 1
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-runtime-1
+          path: D:\_mig\upload\runtime-part-1.dat
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Report runtime progress 1
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $m = Get-Content 'D:\_mig\upload\manifest.json' | ConvertFrom-Json
+          $done = [int64]$m.state + [int64]$m.runtime[0] + [int64]$m.runtime[1]
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; step = 'uploading'; bytes_total = [int64]$m.total; bytes_done = $done } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+
+      - name: Upload runtime part 2
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-runtime-2
+          path: D:\_mig\upload\runtime-part-2.dat
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Report runtime progress 2
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $m = Get-Content 'D:\_mig\upload\manifest.json' | ConvertFrom-Json
+          $done = [int64]$m.state + [int64]$m.runtime[0] + [int64]$m.runtime[1] + [int64]$m.runtime[2]
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; step = 'uploading'; bytes_total = [int64]$m.total; bytes_done = $done } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+
+      - name: Upload runtime part 3
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-runtime-3
+          path: D:\_mig\upload\runtime-part-3.dat
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Upload migrate-d
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: migrate-d
+          path: D:\_mig\upload\d.tar.gz
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Report uploaded
+        if: steps.prepare_snapshot.outputs.SNAPSHOT_READY == 'true'
+        shell: powershell
+        env:
+          CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
+        run: |
+          $m = Get-Content 'D:\_mig\upload\manifest.json' | ConvertFrom-Json
+          $body = @{ runId = "$env:GITHUB_RUN_ID"; step = 'uploaded'; bytes_total = [int64]$m.total; bytes_done = [int64]$m.total } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'http://20.243.210.171:2210/migrate/report' -Headers @{ 'X-Tunnel-Callback-Token' = "$env:CB_TOKEN" } -ContentType 'application/json' -Body $body -TimeoutSec 30 | Out-Null
+          Write-Output "snapshot uploaded runId=$env:GITHUB_RUN_ID"
+
+      - name: Keep runner alive until cancelled
+        shell: powershell
+        run: |
+          Write-Output "keeping runner alive (will be cancelled by orchestrator after handoff)"
+          while ($true) { Start-Sleep -Seconds 60 }
