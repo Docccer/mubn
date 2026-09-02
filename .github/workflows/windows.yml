@@ -103,7 +103,6 @@ jobs:
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'ServerAliveInterval=30',
             '-o', 'ServerAliveCountMax=3',
-            '-o', 'ExitOnForwardFailure=yes',
             '-N',
             '-R', "0.0.0.0:${env:SELECTED_PORT}:127.0.0.1:22",
             '-R', "0.0.0.0:${env:RDP_PORT}:127.0.0.1:3389",
@@ -178,15 +177,15 @@ jobs:
           foreach ($a in $release.assets) {
             switch -Wildcard ($a.name) {
               'codex-state.tar.gz' {
-                Invoke-WebRequest -Uri $a.browser_download_url -OutFile 'D:\mig\restore\state\codex-state.tar.gz'
+                & curl.exe -L --fail -sS -o 'D:\mig\restore\state\codex-state.tar.gz' $a.browser_download_url
                 Write-Output "loaded $($a.name)"
               }
               'runtime-part-*.dat' {
-                Invoke-WebRequest -Uri $a.browser_download_url -OutFile "D:\mig\restore\runtime\$($a.name)"
+                & curl.exe -L --fail -sS -o "D:\mig\restore\runtime\$($a.name)" $a.browser_download_url
                 Write-Output "loaded $($a.name)"
               }
               'migrate-d.tar.gz' {
-                Invoke-WebRequest -Uri $a.browser_download_url -OutFile 'D:\mig\restore\d\migrate-d.tar.gz'
+                & curl.exe -L --fail -sS -o 'D:\mig\restore\d\migrate-d.tar.gz' $a.browser_download_url
                 Write-Output "loaded $($a.name)"
               }
               default {
