@@ -1,0 +1,82 @@
+name: Transfer Lab Chunked
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'upload or download'
+        required: true
+        default: 'upload'
+      run_id:
+        description: 'source run id to download from (download mode)'
+        required: false
+        default: ''
+      size_mb:
+        description: 'size of each chunk in MB'
+        required: false
+        default: '512'
+      chunk_count:
+        description: 'number of chunks'
+        required: false
+        default: '4'
+
+jobs:
+  # Upload path: parallel matrix, each runner uploads one chunk artifact.
+  upload:
+    if: ${{ inputs.mode == 'upload' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: [0, 1, 2, 3]
+    steps:
+      - name: Generate chunk ${{ matrix.chunk }}
+        shell: powershell
+        run: |
+          $sizeMB = [int]"${{ inputs.size_mb }}"
+          $chunk = [int]"${{ matrix.chunk }}"
+          $dir = 'D:\work\chunks'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $p = Join-Path $dir ("chunk-{0}.bin" -f $chunk)
+          $fs = [System.IO.File]::Create($p)
+          $buf = New-Object byte[] (1MB)
+          $rnd = New-Object Random ($chunk * 7919 + 12345)
+          $rnd.NextBytes($buf)
+          for ($i = 0; $i -lt $sizeMB; $i++) { $fs.Write($buf, 0, $buf.Length) }
+          $fs.Close()
+          Get-Item $p | Select-Object @{n='MB';e={[math]::Round($_.Length/1MB,1)}}, FullName | Format-Table -AutoSize
+      - name: Upload chunk ${{ matrix.chunk }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: relay-chunk-${{ matrix.chunk }}
+          path: D:\work\chunks\chunk-${{ matrix.chunk }}.bin
+          compression-level: 0
+          if-no-files-found: error
+
+  # Download path: single runner pulls all chunks in parallel and merges.
+  download:
+    if: ${{ inputs.mode == 'download' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Show params
+        shell: powershell
+        run: |
+          Write-Output "run_id=${{ inputs.run_id }}  this_run=${{ github.run_id }}  chunks=${{ inputs.chunk_count }}"
+      - name: Download chunks in parallel
+        uses: actions/download-artifact@v8
+        with:
+          pattern: relay-chunk-*
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: true
+          path: D:\work\downloaded\
+      - name: Audit download
+        shell: powershell
+        run: |
+          $dir = 'D:\work\downloaded'
+          $files = Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue
+          $files | Sort-Object Length -Descending | Select-Object @{n='MB';e={[math]::Round($_.Length/1MB,1)}}, Name | Format-Table -AutoSize
+          $total = ($files | Measure-Object Length -Sum).Sum
+          Write-Output ("downloaded files=" + $files.Count + " totalMB=" + [math]::Round($total/1MB,1))
