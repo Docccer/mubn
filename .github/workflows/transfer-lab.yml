@@ -1,0 +1,87 @@
+name: Transfer Lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'upload or download'
+        required: true
+        default: 'upload'
+      run_id:
+        description: 'source run id to download from'
+        required: false
+        default: ''
+      size_mb:
+        description: 'payload size in MB'
+        required: false
+        default: '512'
+      payload_name:
+        description: 'artifact name'
+        required: false
+        default: 'relay-payload'
+
+jobs:
+  lab:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Show params
+        shell: powershell
+        run: |
+          Write-Output "mode=${{ inputs.mode }}"
+          Write-Output "size_mb=${{ inputs.size_mb }}"
+          Write-Output "run_id=${{ inputs.run_id }}"
+          Write-Output "payload_name=${{ inputs.payload_name }}"
+          Write-Output "run_id_this=${{ github.run_id }}"
+
+      - name: Generate payload (upload)
+        if: ${{ inputs.mode == 'upload' }}
+        shell: powershell
+        run: |
+          $sizeMB = [int]"${{ inputs.size_mb }}"
+          $dir = 'D:\work'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $p = Join-Path $dir 'payload.bin'
+          $fs = [System.IO.File]::Create($p)
+          $chunk = New-Object byte[] (1MB)
+          $rnd = New-Object Random 987654321
+          $rnd.NextBytes($chunk)
+          for ($i = 0; $i -lt $sizeMB; $i++) {
+            $fs.Write($chunk, 0, $chunk.Length)
+          }
+          $fs.Close()
+          $f = Get-Item $p
+          Write-Output ("payload bytes=" + $f.Length + "  path=" + $f.FullName)
+
+      - name: Upload payload
+        if: ${{ inputs.mode == 'upload' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.payload_name }}
+          path: D:\work\payload.bin
+          compression-level: 0
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Download payload
+        if: ${{ inputs.mode == 'download' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.payload_name }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: D:\work\
+
+      - name: Audit download
+        if: ${{ inputs.mode == 'download' }}
+        shell: powershell
+        run: |
+          $dir = 'D:\work'
+          $files = Get-ChildItem $dir -Recurse -File -ErrorAction SilentlyContinue
+          $files | Sort-Object Length -Descending | Select-Object -First 5 @{n='MB';e={[math]::Round($_.Length/1MB,1)}}, FullName | Format-Table -AutoSize
+          if ($files) {
+            $total = ($files | Measure-Object Length -Sum).Sum
+            Write-Output ("downloaded files=" + $files.Count + " totalMB=" + [math]::Round($total/1MB,1))
+          } else {
+            Write-Output "no downloaded files"
+          }
