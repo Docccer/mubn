@@ -54,6 +54,7 @@ jobs:
           }
           New-ItemProperty -Path $TSPath -Name 'VGPUEncoding' -Value 1 -PropertyType DWORD -Force
           New-ItemProperty -Path $TSPath -Name 'AVC444ModePreferred' -Value 1 -PropertyType DWORD -Force
+          New-ItemProperty -Path $TSPath -Name 'AVCHardwareEncodePreferred' -Value 1 -PropertyType DWORD -Force
           Add-LocalGroupMember -Group 'Remote Desktop Users' -Member runneradmin -ErrorAction SilentlyContinue
           Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
           Restart-Service TermService -Force -ErrorAction SilentlyContinue
@@ -103,6 +104,8 @@ jobs:
             '-o', 'StrictHostKeyChecking=no',
             '-o', 'ServerAliveInterval=30',
             '-o', 'ServerAliveCountMax=3',
+            '-o', 'Compression=no',
+            '-o', 'Ciphers=aes128-gcm@openssh.com,aes256-gcm@openssh.com',
             '-N',
             '-R', "0.0.0.0:${env:SELECTED_PORT}:127.0.0.1:22",
             '-R', "0.0.0.0:${env:RDP_PORT}:127.0.0.1:3389",
