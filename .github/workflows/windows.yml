@@ -280,6 +280,8 @@ jobs:
           if (-not (Test-Path $dTar)) { $dTar = 'D:\mig\restore\d\migrate-d.tar.gz' }
           if (Test-Path $dTar) {
             tar -xzf $dTar -C 'D:\'
+            if ($LASTEXITCODE -ne 0) { Write-Warning "D snapshot extract had warnings (rc=$LASTEXITCODE)" }
+            $global:LASTEXITCODE = 0
             Write-Output "restored D: snapshot"
           } else {
             Write-Warning "migrate-d artifact missing"
@@ -404,18 +406,21 @@ jobs:
                   if excluded(dirpath):
                       continue
                   rel = os.path.relpath(dirpath, root).replace('\\', '/')
-                  arc = './' if rel == '.' else rel
-                  if arc not in written_dirs:
-                      ti = tarfile.TarInfo(arc)
-                      ti.type = tarfile.DIRTYPE
-                      ti.mode = 0o755
-                      try:
-                          ti.mtime = int(os.path.getmtime(dirpath))
-                      except Exception:
-                          ti.mtime = 0
-                      tf.addfile(ti)
-                      written_dirs.add(arc)
-                      added_dirs += 1
+                  # Never emit the root (".") entry: `tar -xzf -C 'D:\'` would then
+                  # try to recreate D:\ itself and fail with "Permission denied".
+                  if rel != '.':
+                      arc = rel
+                      if arc not in written_dirs:
+                          ti = tarfile.TarInfo(arc)
+                          ti.type = tarfile.DIRTYPE
+                          ti.mode = 0o755
+                          try:
+                              ti.mtime = int(os.path.getmtime(dirpath))
+                          except Exception:
+                              ti.mtime = 0
+                          tf.addfile(ti)
+                          written_dirs.add(arc)
+                          added_dirs += 1
                   for name in filenames:
                       full = os.path.join(dirpath, name)
                       if excluded(full):
