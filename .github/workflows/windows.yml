@@ -347,9 +347,29 @@ jobs:
           Remove-Item 'D:\_mig\upload\d.tar.gz' -Force -ErrorAction SilentlyContinue
           Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
+          # Codex state + runtime are the critical payload; if their tar fails we still
+          # continue (artifact upload step will warn), but we must never let a transient
+          # D: drive error abort the whole snapshot step.
           tar -czf 'D:\_mig\upload\codex-state.tar.gz' -C "$env:USERPROFILE" .codex
+          if ($LASTEXITCODE -ne 0) { Write-Warning "codex-state tar failed: exit $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
           tar -czf 'D:\_mig\upload\codex-runtime.tar.gz' -C "$env:LOCALAPPDATA\OpenAI" Codex
-          tar --exclude='D:/_mig' --exclude='D:/$RECYCLE.BIN' --exclude='D:/System Volume Information' --exclude='D:/pagefile.sys' --exclude='D:/DumpStack.log.tmp' --exclude='D:/DATALOSS_WARNING_README.txt' --exclude='D:/a/_temp' --exclude='D:/a/_PipelineMapping' --exclude='D:/CollectGuestLogsTemp' -czf 'D:\_mig\upload\d.tar.gz' -C 'D:\' .
+          if ($LASTEXITCODE -ne 0) { Write-Warning "codex-runtime tar failed: exit $LASTEXITCODE" }
+          $global:LASTEXITCODE = 0
+
+          # D: drive snapshot is best-effort. A locked/deleted dir must NOT kill the swap.
+          $dTarOk = $false
+          $dTarFile = 'D:\_mig\upload\d.tar.gz'
+          if (Test-Path $dTarFile) { Remove-Item $dTarFile -Force -ErrorAction SilentlyContinue }
+          try {
+            tar --exclude='D:/_mig' --exclude='D:/$RECYCLE.BIN' --exclude='D:/System Volume Information' --exclude='D:/pagefile.sys' --exclude='D:/DumpStack.log.tmp' --exclude='D:/DATALOSS_WARNING_README.txt' --exclude='D:/a/_temp' --exclude='D:/a/_PipelineMapping' --exclude='D:/CollectGuestLogsTemp' -czf $dTarFile -C 'D:\' .
+            $dTarOk = ($LASTEXITCODE -eq 0)
+          } catch {
+            Write-Warning "D: drive tar error: $($_.Exception.Message)"
+          }
+          if (-not $dTarOk) { Write-Warning "D: drive snapshot skipped (non-fatal)" }
+          $global:LASTEXITCODE = 0
 
           $chunkMB = 512; $chunkBytes = [int64]$chunkMB * 1MB
           $src = 'D:\_mig\upload\codex-runtime.tar.gz'
@@ -374,9 +394,11 @@ jobs:
           }
           Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' | Where-Object { $_.Length -eq 0 -and $_.Name -ne 'runtime-part-0.dat' } | ForEach-Object { Remove-Item $_.FullName -Force }
 
-          $stateSize = (Get-Item 'D:\_mig\upload\codex-state.tar.gz').Length
-          $dSize = (Get-Item 'D:\_mig\upload\d.tar.gz').Length
-          $rtParts = Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' | Sort-Object Name
+          $stateSize = 0
+          if (Test-Path 'D:\_mig\upload\codex-state.tar.gz') { $stateSize = [int64](Get-Item 'D:\_mig\upload\codex-state.tar.gz').Length }
+          $dSize = 0
+          if (Test-Path $dTarFile) { $dSize = [int64](Get-Item $dTarFile).Length }
+          $rtParts = Get-ChildItem 'D:\_mig\upload\runtime-part-*.dat' -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 } | Sort-Object Name
           $rtTotal = 0; foreach ($p in $rtParts) { $rtTotal += $p.Length }
           $total = [int64]$stateSize + [int64]$dSize + [int64]$rtTotal
           $manifest = @{ total = $total; state = [int64]$stateSize; d = [int64]$dSize; runtime = @($rtParts | ForEach-Object { [int64]$_.Length }) } | ConvertTo-Json -Compress
