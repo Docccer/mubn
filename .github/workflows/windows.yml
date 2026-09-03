@@ -361,15 +361,82 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Warning "codex-runtime tar failed: exit $LASTEXITCODE" }
           $global:LASTEXITCODE = 0
 
-          # D: drive snapshot is best-effort. A locked/deleted dir must NOT kill the swap.
+          # D: drive snapshot. The bundled bsdtar (tar.exe) aborts on a malformed directory
+          # name some runner images leave on D:\ (e.g. "maven\...\bin;C:\Program Fil..."),
+          # which produced a 29-byte empty archive and silently dropped the whole D: drive.
+          # Use Python tarfile instead: it walks with onerror, skips unreadable entries,
+          # preserves empty dirs, and never lets a single bad path abort the swap.
           $dTarOk = $false
           $dTarFile = 'D:\_mig\upload\d.tar.gz'
           if (Test-Path $dTarFile) { Remove-Item $dTarFile -Force -ErrorAction SilentlyContinue }
+          $pyFile = 'D:\_mig\upload\snapshot_d.py'
+          $py = @'
+          import os, sys, tarfile, time
+          root = sys.argv[1] if len(sys.argv) > 1 else 'D:\\'
+          out  = sys.argv[2] if len(sys.argv) > 2 else 'D:\\_mig\\upload\\d.tar.gz'
+          excl_dir = [r'D:\$RECYCLE.BIN', r'D:\System Volume Information', r'D:\CollectGuestLogsTemp',
+                      r'D:\_mig', r'D:\mig', r'D:\a\_temp', r'D:\a\_PipelineMapping']
+          excl_file = [r'D:\pagefile.sys', r'D:\DumpStack.log.tmp', r'D:\DATALOSS_WARNING_README.txt']
+          def norm(p):
+              return p.replace('/', '\\')
+          def excluded(abs):
+              a = norm(abs).lower()
+              for d in excl_dir:
+                  dd = norm(d).rstrip('\\').lower()
+                  if a == dd or a.startswith(dd + '\\'):
+                      return True
+              for f in excl_file:
+                  if a == norm(f).lower():
+                      return True
+              return False
+          errors = []
+          written_dirs = set()
+          added_dirs = 0
+          added_files = 0
+          def onerr(e):
+              errors.append('walk:' + str(e))
+          with tarfile.open(out, 'w:gz', compresslevel=6) as tf:
+              for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=onerr):
+                  dirnames[:] = [d for d in dirnames if not excluded(os.path.join(dirpath, d))]
+                  if excluded(dirpath):
+                      continue
+                  rel = os.path.relpath(dirpath, root).replace('\\', '/')
+                  arc = './' if rel == '.' else rel
+                  if arc not in written_dirs:
+                      ti = tarfile.TarInfo(arc)
+                      ti.type = tarfile.DIRTYPE
+                      ti.mode = 0o755
+                      try:
+                          ti.mtime = int(os.path.getmtime(dirpath))
+                      except Exception:
+                          ti.mtime = 0
+                      tf.addfile(ti)
+                      written_dirs.add(arc)
+                      added_dirs += 1
+                  for name in filenames:
+                      full = os.path.join(dirpath, name)
+                      if excluded(full):
+                          continue
+                      arcname = os.path.relpath(full, root).replace('\\', '/')
+                      try:
+                          tf.add(full, arcname=arcname, recursive=False)
+                          added_files += 1
+                      except Exception as ex:
+                          errors.append('add:' + str(ex))
+          if errors:
+              print('D_SNAP_WARN errors=%d first=%s' % (len(errors), errors[0][:200]))
+          print('D_SNAP_OK dirs=%d files=%d' % (added_dirs, added_files))
+          '@
+          [System.IO.File]::WriteAllText($pyFile, $py, (New-Object System.Text.UTF8Encoding($false)))
           try {
-            tar --exclude='D:/_mig' --exclude='D:/$RECYCLE.BIN' --exclude='D:/System Volume Information' --exclude='D:/pagefile.sys' --exclude='D:/DumpStack.log.tmp' --exclude='D:/DATALOSS_WARNING_README.txt' --exclude='D:/a/_temp' --exclude='D:/a/_PipelineMapping' --exclude='D:/CollectGuestLogsTemp' -czf $dTarFile -C 'D:\' .
-            $dTarOk = ($LASTEXITCODE -eq 0)
+            & python $pyFile
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $dTarFile) -and (Get-Item $dTarFile).Length -gt 0) {
+              $dTarOk = $true
+            } else {
+              Write-Warning "D: drive snapshot produced no archive (python rc=$LASTEXITCODE)"
+            }
           } catch {
-            Write-Warning "D: drive tar error: $($_.Exception.Message)"
+            Write-Warning "D: drive snapshot error: $($_.Exception.Message)"
           }
           if (-not $dTarOk) { Write-Warning "D: drive snapshot skipped (non-fatal)" }
           $global:LASTEXITCODE = 0
