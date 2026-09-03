@@ -273,8 +273,11 @@ jobs:
             Write-Warning "codex-runtime artifact missing"
           }
 
-          # 3. D: drive snapshot
-          $dTar = 'D:\mig\restore\d\migrate-d.tar.gz'
+          # 3. D: drive snapshot. The migrate-d artifact contains a file named
+          # d.tar.gz (uploaded as D:\_mig\upload\d.tar.gz). The bootstrap release
+          # asset is saved as migrate-d.tar.gz, so accept either name.
+          $dTar = 'D:\mig\restore\d\d.tar.gz'
+          if (-not (Test-Path $dTar)) { $dTar = 'D:\mig\restore\d\migrate-d.tar.gz' }
           if (Test-Path $dTar) {
             tar -xzf $dTar -C 'D:\'
             Write-Output "restored D: snapshot"
