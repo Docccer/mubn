@@ -1,10 +1,19 @@
 name: Windows SSH Runner (Codex Migrate)
+run-name: Windows Runner [${{ inputs.run_mode }}]
 
 on:
   workflow_dispatch:
     inputs:
+      run_mode:
+        description: '运行模式（manual=普通 Runner，migrate=6h 自动迁移）'
+        required: true
+        default: 'manual'
+        type: choice
+        options:
+          - manual
+          - migrate
       prev_run_id:
-        description: '源 run id（还原该 run 的快照；留空=全新 runner）'
+        description: '迁移源 run id（仅 migrate 模式使用；留空=全新 runner）'
         required: false
         default: ''
       swap_hours:
@@ -147,6 +156,7 @@ jobs:
             owner = 'Docccer'
             repo = 'mubn'
             workflow = 'windows.yml'
+            runMode = '${{ inputs.run_mode }}'
             runId = "$env:GITHUB_RUN_ID"
             jobName = 'windows-runner'
             runnerName = "$env:RUNNER_NAME"
@@ -177,7 +187,7 @@ jobs:
           Start-Sleep -Seconds 5
 
       - name: Download bootstrap release
-        if: ${{ inputs.prev_run_id == 'bootstrap' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id == 'bootstrap' }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -208,7 +218,7 @@ jobs:
             Select-Object FullName,Length | Format-Table -AutoSize | Out-String | Write-Output
 
       - name: Download codex-state artifact
-        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: codex-state
@@ -218,7 +228,7 @@ jobs:
           path: D:\mig\restore\state
 
       - name: Download codex-runtime artifact
-        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: codex-runtime-*
@@ -228,7 +238,7 @@ jobs:
           path: D:\mig\restore\runtime
 
       - name: Download migrate-d artifact
-        if: ${{ inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' && inputs.prev_run_id != 'bootstrap' }}
         uses: actions/download-artifact@v8
         with:
           pattern: migrate-d
@@ -238,7 +248,7 @@ jobs:
           path: D:\mig\restore\d
 
       - name: Extract restored data
-        if: ${{ inputs.prev_run_id != '' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -310,7 +320,7 @@ jobs:
           }
 
       - name: Report ready to orchestrator
-        if: ${{ inputs.prev_run_id != '' }}
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' }}
         shell: powershell
         env:
           CB_TOKEN: ${{ secrets.ACTIONS_CALLBACK_TOKEN }}
@@ -324,6 +334,7 @@ jobs:
           }
 
       - name: Wait for migration signal and snapshot
+        if: ${{ inputs.run_mode == 'migrate' && inputs.prev_run_id != '' }}
         id: prepare_snapshot
         shell: powershell
         env:
